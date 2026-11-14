@@ -555,6 +555,11 @@ import kotlin.math.min
             }
             faceRect.set(r.left, r.top, r.right, r.bottom - thickness)
             if (pressed) {
+                // 按下 / 抬起反馈（2026-11-14）：键帽面向内收 3%，让手指看到「陷下去」的一下，
+                // 而不是只换一个颜色。只动绘制矩形、不动 [rect]（命中区与文字基线保持原样，
+                // 连打时不会出现文字跟着抖）。
+                val inset = minOf(faceRect.width(), faceRect.height()) * 0.03f
+                faceRect.inset(inset, inset)
                 keyPaint.shader = null
                 keyPaint.color = v.pressed
             } else if (v.face != v.face2) {
