@@ -194,6 +194,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 拼音条上的光标标记（只用于显示，永远不进 [composing]） */
     private val caretMark = "｜"
 
+    /** 候选栏刷新已排到下一帧（见 [refreshCandidateBar] 的合并语义） */
+    private var candidateRefreshPosted = false
+
+    /** 正在渲染候选栏（防重入：渲染过程里若再被请求刷新，直接丢弃那一层） */
+    private var renderingCandidates = false
+
     /** 是否处于英文模式（字母直接上屏，不查候选） */
     private var englishMode = false
 
@@ -3738,7 +3744,45 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
     }
 
+    /**
+     * 候选栏刷新（**延后到下一动画帧**，2026-11-14 手感优化）。
+     *
+     * 为什么延一帧：按键回调里「亮起被按下的键」与「查询词库 + 重建候选行」原来是同一帧做完的，
+     * 查询（Kotlin 侧分段 + 索引查询，实测几百 us 到几 ms）跑完才提交整帧，用户看到的按下高亮
+     * 会跟着引擎耗时一起被推迟，连打时就成了「跟不上手指」。
+     *
+     * 现在改法：按键先提交自己那一帧（键帽立刻变色 + 拼音条先走），候选重建排到下一帧再算。
+     * 同一帧内多次请求合并成一次（[candidateRefreshPosted] 去重），而 [refreshCandidateBarNow]
+     * 每次都是按**当时最新的** composing 重算 —— 合并语义因此天然是「以最后一次输入为准」，
+     * 不会出现中途串的候选盖住最新串。
+     *
+     * 不用后台线程：`PinyinEngine.query` 与 `lastCandidates` / 候选视图池都不是线程安全的，
+     * 跨线程要动的面比收益大（词库索引、预测缓存、rememberChoice 全在里面）。
+     */
     private fun refreshCandidateBar() {
+        if (!isAttachedToWindow) {
+            refreshCandidateBarNow()
+            return
+        }
+        if (candidateRefreshPosted) return
+        candidateRefreshPosted = true
+        postOnAnimation {
+            candidateRefreshPosted = false
+            refreshCandidateBarNow()
+        }
+    }
+
+    private fun refreshCandidateBarNow() {
+        if (renderingCandidates) return
+        renderingCandidates = true
+        try {
+            renderCandidateBarInner()
+        } finally {
+            renderingCandidates = false
+        }
+    }
+
+    private fun renderCandidateBarInner() {
         // 动作排只活在「功能面板态」：本帧要渲染的是符号层 / 密码数字条 / 候选 / 预测 / 拼音串时
         // 顺手收起（2026-10-09）。判据按「本帧实际要渲染什么」—— 符号层与数字层都是
         // `layer != LAYER_LETTER`，与 composing 长度无关。
