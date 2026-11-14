@@ -32,3 +32,8 @@
 -keepclassmembers enum com.jinn.inputmethod.TranslationLanguage { *; }
 -keepclassmembers enum com.jinn.inputmethod.TranslationScope { *; }
 -keepclassmembers enum com.jinn.inputmethod.TranslationProviderId { *; }
+
+# ── sherpa-onnx（离线语音，2026-11-14）──
+# JNI 用 RegisterNatives 按**方法名**绑定 native 实现，Kotlin API 的类名/方法名一旦被 R8 改名，
+# 绑定就找不到符号（表现是首次解码整进程崩溃，而不是抛异常）。整包保留最稳。
+-keep class com.k2fsa.sherpa.onnx.** { *; }
