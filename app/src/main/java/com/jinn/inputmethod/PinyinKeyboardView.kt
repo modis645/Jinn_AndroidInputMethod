@@ -14,6 +14,7 @@ import android.util.Log
 import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.inputmethod.EditorInfo
@@ -198,6 +199,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 逐键展开的结果（与 [composing] 不是一一对应），按显示位置定位会错位。
      */
     private var pinyinCaret = -1
+
+    /** 拼音条上一次点按的时间与落点（双击 = 插音节分隔符，见 [bindPinyinCaret]） */
+    private var pinyinLastTapMs = 0L
+    private var pinyinLastTapLetters = -1
 
     /** 拼音条上的光标标记（只用于显示，永远不进 [composing]） */
     private val caretMark = "｜"
@@ -1891,6 +1896,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 listener?.onCommitText(text)
             }
         }
+        // 长按「，」= 在**光标处**补一道音节分隔符（自动切分切错时的手动纠正）。
+        // 前提是先点过拼音条把光标放好（那里正是要断开的位置）；没光标就不接管，让长按无动作，
+        // 短按出逗号的原有行为完全不受影响。
+        btnComma.setOnLongClickListener {
+            if (englishMode || composing.isEmpty() || layer != LAYER_LETTER) return@setOnLongClickListener false
+            if (pinyinCaret <= 0 || pinyinCaret >= composing.length) return@setOnLongClickListener false
+            insertSeparator(pinyinCaret)
+            true
+        }
     }
 
     // ── 对外控制 ───────────────────────────────────────────
@@ -3145,6 +3159,24 @@ class PinyinKeyboardView @JvmOverloads constructor(
         if (pinyinCaret >= 0) pinyinCaret = at + 1
     }
 
+    /**
+     * 在光标处插入一个音节分隔符（`'`）：自动切分切错时由用户自己断。
+     *
+     * 相邻重复、段首尾的分隔符都不插（对切分毫无作用，只会让拼音条看起来乱）。
+     */
+    private fun insertSeparator(letters: Int) {
+        val at = letters.coerceIn(0, composing.length)
+        // 段首、段尾插分隔符对切分毫无作用，只会让拼音条看起来乱
+        if (at <= 0 || at >= composing.length) return
+        if (composing.getOrNull(at - 1) == PinyinEngine.SEPARATOR_CHAR) return
+        if (composing.getOrNull(at) == PinyinEngine.SEPARATOR_CHAR) return
+        composing.insert(at, PinyinEngine.SEPARATOR_CHAR)
+        pinyinCaret = at + 1
+        KeyFeedback.fire(TapSound.G_TEXT)
+        Diagnostics.i(TAG, "音节分隔: 插入于第 $at 位 → ${composing}")
+        refreshCandidateBar()
+    }
+
     /** 显示串里算作「拼音字母」的字符：音节分隔符与光标标记都不计数 */
     private fun isPinyinLetterChar(ch: Char): Boolean = ch in 'a'..'z' || ch in 'A'..'Z'
 
@@ -3180,6 +3212,19 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 k++
             }
             pinyinCaret = letters
+            // 双击同一处 = 在这里插一道音节分隔符（自动切分切错时的手动纠正，见 insertSeparator）
+            val now = event.eventTime
+            if (letters == pinyinLastTapLetters &&
+                now - pinyinLastTapMs in 0..ViewConfiguration.getDoubleTapTimeout().toLong()
+            ) {
+                pinyinLastTapMs = 0L
+                pinyinLastTapLetters = -1
+                pinyinCaret = letters
+                insertSeparator(letters)
+                return@setOnTouchListener true
+            }
+            pinyinLastTapMs = now
+            pinyinLastTapLetters = letters
             Diagnostics.i(TAG, "拼音光标: 定位到第 $letters 位（共 ${composing.length}）")
             refreshCandidateBar()
             true
@@ -4329,7 +4374,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * @return true 表示拼音已全部消费；false 表示存在残码，候选栏应立即重查
      */
     private fun consumePinyin(candidate: String): Boolean {
-        val fullInput = if (shuangpinMode) Shuangpin.toQuanpin(composing.toString(), scheme) else composing.toString()
+        // 用户插的音节分隔符不参与「消费了多少个字母」的计数：先剥掉再算，删的时候按字母走
+        val typed = composing.toString()
+        val hasSeparator = typed.indexOf(PinyinEngine.SEPARATOR_CHAR) >= 0
+        val plain = if (hasSeparator) typed.replace(PinyinEngine.SEPARATOR_CHAR.toString(), "") else typed
+        val fullInput = if (shuangpinMode) Shuangpin.toQuanpin(plain, scheme) else plain
         val consumption = PinyinEngine.consumption(fullInput, candidate)
         if (consumption.quanpinChars >= fullInput.length) {
             composing.clear()
@@ -4338,6 +4387,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         if (shuangpinMode) {
             val keys = (consumption.syllables * 2).coerceAtMost(composing.length)
             composing.delete(0, keys)
+        } else if (hasSeparator) {
+            deleteLeadingLetters(consumption.quanpinChars)
         } else {
             composing.delete(0, consumption.quanpinChars)
         }
@@ -4348,6 +4399,23 @@ class PinyinKeyboardView @JvmOverloads constructor(
         )
         return false
     }
+    /**
+     * 从串首删掉 [letters] 个字母，路上遇到的分隔符一并带走；留下的残码若以分隔符开头也去掉。
+     *
+     * 为什么不能直接 `composing.delete(0, n)`：拼音串里混着用户插的 `'`，`n` 只数了字母，
+     * 直接按字符下标删会少删字母（候选上屏后拼音条还剩半个音节）。
+     */
+    private fun deleteLeadingLetters(letters: Int) {
+        var remaining = letters
+        var i = 0
+        while (i < composing.length && remaining > 0) {
+            if (composing[i] != PinyinEngine.SEPARATOR_CHAR) remaining--
+            i++
+        }
+        composing.delete(0, i)
+        while (composing.isNotEmpty() && composing[0] == PinyinEngine.SEPARATOR_CHAR) composing.deleteCharAt(0)
+    }
+
     /**
      * 候选栏内联提示（词库加载中 / 补全中）。
      *
