@@ -37,10 +37,13 @@ object VoiceBackend {
     const val BAIDU = "baidu"
     const val DEEPGRAM = "deepgram"
 
+    /** 本机离线识别（sherpa-onnx + SenseVoice「快速整句」，不联网、不需要任何 Key） */
+    const val LOCAL = "local"
+
     /** 出厂默认：自建服务端（在线后端要求用户自带凭据，不能默认开） */
     const val DEFAULT = CAPS
 
-    /** 归一：除下列八个合法取值之外的一切（脏配置 / 手改 prefs / 更高版本）都落回 [CAPS] */
+    /** 归一：除下列合法取值之外的一切（脏配置 / 手改 prefs / 更高版本）都落回 [CAPS] */
     fun of(raw: String?): String = when (raw) {
         XF -> XF
         OAI -> OAI
@@ -49,15 +52,16 @@ object VoiceBackend {
         AZURE -> AZURE
         BAIDU -> BAIDU
         DEEPGRAM -> DEEPGRAM
+        LOCAL -> LOCAL
         else -> CAPS
     }
 
     /**
      * 是否**在线后端**（讯飞 / OpenAI 兼容 / 阿里百炼 / 腾讯云 / Azure / 百度 / Deepgram）。
      * 单次音频都有 60 秒级上限，到点必须自动收尾（见 `JinnIme.autoStopDelayMs`）；
-     * 自建服务端按连接持有缓冲，可以长跑。
+     * 自建服务端按连接持有缓冲，可以长跑。离线后端同样按本地缓冲整段解码，没有网络超时。
      */
-    fun isOnline(raw: String?): Boolean = of(raw) != CAPS
+    fun isOnline(raw: String?): Boolean = of(raw) != CAPS && of(raw) != LOCAL
 }
 
 /**
@@ -77,6 +81,9 @@ class Prefs(private val appContext: Context) {
 
     private val sp = appContext.applicationContext
         .getSharedPreferences("jinn_inputmethod", Context.MODE_PRIVATE)
+
+    /** 应用上下文入口：给需要访问私有目录的模块（如离线语音模型的落点 [LocalAsrModel]）用 */
+    internal val context: Context get() = appContext
 
     /**
      * 读侧类型防御（收口，见 BUG.md L-638 / L-653）：`SharedPreferences` 对**类型不符**的键是
@@ -1121,6 +1128,8 @@ class Prefs(private val appContext: Context) {
      * 判据只回答「配置齐不齐」，不联网探测：真连通性由状态条与客户端回包反馈。
      */
     fun voiceConfigured(): Boolean = when (voiceBackend) {
+        VoiceBackend.LOCAL -> LocalAsrModel.isReady(context)
+
         VoiceBackend.XF -> xfAppId.cleanCredential().isNotEmpty() &&
             xfApiKey.cleanCredential().isNotEmpty() &&
             xfApiSecret.cleanCredential().isNotEmpty()
