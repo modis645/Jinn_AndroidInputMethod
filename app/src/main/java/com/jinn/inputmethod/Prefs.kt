@@ -40,8 +40,8 @@ object VoiceBackend {
     /** 本机离线识别（sherpa-onnx + SenseVoice「快速整句」，不联网、不需要任何 Key） */
     const val LOCAL = "local"
 
-    /** 出厂默认：自建服务端（在线后端要求用户自带凭据，不能默认开） */
-    const val DEFAULT = CAPS
+    /** 出厂默认：本机离线（不联网、不要凭据）。模型未下载时状态条会直接说「缺哪件」 */
+    const val DEFAULT = LOCAL
 
     /** 归一：除下列合法取值之外的一切（脏配置 / 手改 prefs / 更高版本）都落回 [CAPS] */
     fun of(raw: String?): String = when (raw) {
