@@ -223,6 +223,9 @@ class SettingsActivity : ComponentActivity() {
         setContentView(R.layout.activity_settings)
         prefs = Prefs(this)
         Diagnostics.i(TAG, "onCreate: 设置页启动")
+        // 换包名后的第一次进入：把旧包（com.jinn.inputmethod）的偏好与已下载模型搬过来。
+        // 只补缺不覆盖，旧包不存在则静默跳过（见 LegacyMigration）。
+        LegacyMigration.runOnce(this)
 
         spinnerShuangpin = findViewById(R.id.spinner_shuangpin)
 
@@ -474,6 +477,8 @@ class SettingsActivity : ComponentActivity() {
         refreshDictEntryEmphasis()
         // 首启引导：每次回到本页都按系统真实状态重写这两个按钮（启用 ≠ 选中，是两件事）
         refreshImeStatus()
+        // 语音入口的模型状态：从语音设置页下完模型返回时，按钮上的提示要立刻收回去
+        refreshVoiceEntry()
     }
 
     // ── 启用 / 切换状态 ─────────────────────────────────────
@@ -670,6 +675,25 @@ class SettingsActivity : ComponentActivity() {
             Diagnostics.i(TAG, "设置页: 打开语音设置")
             runCatching { startActivity(Intent(this, VoiceSettingsActivity::class.java)) }
                 .onFailure { Diagnostics.w(TAG, "打开语音设置失败: ${it.message}") }
+        }
+        refreshVoiceEntry()
+    }
+
+    /**
+     * 语音入口的副标题：离线模型的就绪状态直接写在这颗按钮上。
+     *
+     * 为什么放在这一层：模型下载入口藏在语音设置页里，第一次用语音的人常常找不到 ——
+     * 首启引导停在设置主页时，就应该看见「还差 163 MB 模型」这件事。
+     * 只有后端选了「本机离线」时才提示；在线后端与未配置的文案保持原样。
+     */
+    private fun refreshVoiceEntry() {
+        if (!::btnVoiceSettings.isInitialized) return
+        val local = prefs.voiceBackend == VoiceBackend.LOCAL
+        val ready = LocalAsrModel.isReady(this)
+        btnVoiceSettings.text = when {
+            !local -> TEXT_VOICE_ENTRY
+            ready -> TEXT_VOICE_ENTRY_LOCAL_READY
+            else -> TEXT_VOICE_ENTRY_LOCAL_MISSING
         }
     }
 
@@ -1763,6 +1787,12 @@ class SettingsActivity : ComponentActivity() {
          * 本页只留这一个入口，与「绑定悬浮键盘」同排；状态小字已删）。
          */
         const val TEXT_VOICE_ENTRY = "语音转为文字"
+
+        /** 语音入口：本机离线后端 + 模型未下载 —— 把「差什么」写在按钮上，首启就能看见 */
+        const val TEXT_VOICE_ENTRY_LOCAL_MISSING = "语音转为文字（点这里下载离线模型）"
+
+        /** 语音入口：本机离线后端 + 模型已就绪 */
+        const val TEXT_VOICE_ENTRY_LOCAL_READY = "语音转为文字（离线模型已就绪）"
 
         /**
          * 最底部使用说明（六行，`\n` 分隔）。
