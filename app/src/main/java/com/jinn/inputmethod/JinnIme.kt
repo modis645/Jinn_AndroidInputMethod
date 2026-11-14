@@ -396,6 +396,14 @@ class JinnIme : InputMethodService() {
     private var translateInFlight = false
 
     /**
+     * 最近一次「长按退格清空」删掉的文本（2026-11-14）。
+     *
+     * 只在「按住那一下还没松手、手指下滑」时可被消费一次（见 [restoreClearedText]）；
+     * 每次清空都整体覆盖，所以不会把上一轮的旧文本写回输入框。
+     */
+    private var lastClearedText: String? = null
+
+    /**
      * 在途翻译的**网络请求句柄**（2026-10-03 修复 L-494）。
      *
      * 此前「取消翻译」只复位状态与代际，请求仍在网上跑完（大模型可达 300s）并**照常计费**；
@@ -1850,6 +1858,9 @@ class JinnIme : InputMethodService() {
                     sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
                 }
                 override fun onDeleteAll() = deleteAllText()
+
+                // 长按清空后下滑恢复：把清空前那段文本原样写回（一次按住只消费一次）
+                override fun onRestoreDeletedText(): Boolean = restoreClearedText()
                 // ── 26 键空格长按 = 按住说话（2026-11-01）────────────────────────────
                 // 原先是 `onVoiceRequested() → switchToVoiceKeyboard()`：长按直接把键盘切成语音页。
                 // 现在不切页面，录音结果直接落回当前输入框；`switchToVoiceKeyboard` 只剩
@@ -5762,17 +5773,40 @@ class JinnIme : InputMethodService() {
         // 认 deleteSurroundingText 的返回值：宿主拒绝 / 连接失效时立刻收手，不空转跨进程调用。
         val ok = guardHostCall("deleteAllText") {
             var rounds = 0
+            // 逐轮删的同时**逆序拼回**被删掉的文本：第一轮删的是最后一段，之后每轮删更靠前的
+            // ⇒ 用 insert(0, …) 还原成原来的先后顺序。这是给「长按清空 → 下滑恢复」用的存档。
+            val cleared = StringBuilder()
             while (rounds < DELETE_ALL_MAX_ROUNDS) {
-                val before = connection.getTextBeforeCursor(MAX_SCAN_CHARS, 0)?.length ?: 0
-                if (before == 0) break
-                if (!connection.deleteSurroundingText(before, 0)) break
+                val beforeText = connection.getTextBeforeCursor(MAX_SCAN_CHARS, 0) ?: break
+                if (beforeText.isEmpty()) break
+                if (!connection.deleteSurroundingText(beforeText.length, 0)) break
+                cleared.insert(0, beforeText)
                 rounds++
             }
+            lastClearedText = cleared.toString().takeIf { it.isNotEmpty() }
+            rounds
         }
         if (ok) {
             // 返回值只代表请求被宿主接受，不等于文本已删净；日志不做结果断言。
             Diagnostics.i(TAG, "deleteAllText: 删除流程结束（只清光标前方；宿主返回值不代表已删净）")
         }
+    }
+
+    /**
+     * 长按退格清空后「下滑恢复」：把 [lastClearedText] 原样写回光标处。
+     *
+     * 只消费一次（写回成功即清空存档）：一次按住只该恢复一次，反复写回会叠字。
+     * 宿主连接失效时不裸调 Binder，走 [guardHostCall]，失败返回 false 让键盘侧发一声「没成」。
+     */
+    private fun restoreClearedText(): Boolean {
+        val text = lastClearedText ?: return false
+        val connection = currentInputConnection ?: return false
+        val ok = guardHostCall("restoreClearedText") { connection.commitText(text, 1) }
+        if (ok) {
+            lastClearedText = null
+            Diagnostics.i(TAG, "restoreClearedText: 已写回清空前的文本（长度=${text.length}）")
+        }
+        return ok
     }
 
     /**
