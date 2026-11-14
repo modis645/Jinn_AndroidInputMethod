@@ -154,6 +154,10 @@ dependencies {
     // 加载时流式解压、无需落地磁盘，实测解压约 0.6s 且发生在后台加载线程。
     implementation("org.tukaani:xz:1.9")
 
+    // 离线语音模型的解包：上游只发 tar.bz2，Android 没有内置 bzip2 解码器。
+    // 只用 TarArchiveInputStream + BZip2CompressorInputStream 两个类（约 400 KB 打进 dex）。
+    implementation("org.apache.commons:commons-compress:1.26.2")
+
     // 离线语音（sherpa-onnx）：AAR 里的 Kotlin API（classes.jar）与 arm64-v8a 的 .so 由 CI 落到
     // app/libs/ 与 app/src/main/jniLibs/。用 files(...) 且**只在文件存在时**加依赖 —— 仓库里不存 28 MB
     // 二进制，本地没有这包时照样能构建（只是没有离线语音能力）。
