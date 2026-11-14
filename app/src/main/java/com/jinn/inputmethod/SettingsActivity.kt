@@ -250,8 +250,8 @@ class SettingsActivity : ComponentActivity() {
         btnCheckUpdate = findViewById(R.id.btn_check_update)
         btnUpdateDownload = findViewById(R.id.btn_update_download)
         bindCheckUpdate()
-        // 打开设置页时的自动检查：距上次成功检查 ≥7 天才执行（失败静默，见 maybeAutoCheckUpdate）
-        maybeAutoCheckUpdate()
+        // 自动检查更新已停用（定制版：远端包一旦覆盖，所有本地改动都会丢）。
+        // 不再调用 maybeAutoCheckUpdate()，入口那两枚按钮也在布局里隐藏（见 activity_settings.xml）。
         btnExportDiag = findViewById(R.id.btn_export_diag)
         textDiagDir = findViewById(R.id.text_diag_dir)
 
