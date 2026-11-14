@@ -1293,6 +1293,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
         /** 待触发的小写长按转大写；移动超阈值 / 抬手 / 取消 / 同键多指时移除并置 null */
         var longPress: Runnable? = null
 
+        /** 待触发的角标长按（中文拼音态）；与 [longPress] 互斥，见 `canLongPressCorner` */
+        var cornerPress: Runnable? = null
+
         /** 按下瞬间的层 / 符号分组 / 页：抬手时只认同一层同一页（L-1437） */
         var layerAtDown = LAYER_LETTER
         var groupAtDown = 0
@@ -1351,9 +1354,27 @@ class PinyinKeyboardView @JvmOverloads constructor(
         g.longPress = null
     }
 
+    /**
+     * 角标长按是否可用：中文拼音的字母层、非英文态、未开大写锁定。
+     *
+     * 与 [canLongPressUpper] 的启用条件天然互斥（那条只在英文态成立），
+     * 26 键同一根手指不会同时触发两件事。
+     */
+    private fun canLongPressCorner(c: Char): Boolean =
+        layer == LAYER_LETTER && !englishMode && !capsMode && CornerLabels.has(c)
+
+    /** 移除待触发的角标长按；只作用于 [g] 这一个键 */
+    private fun cancelCornerPress(g: KeyGesture) {
+        g.cornerPress?.let { removeCallbacks(it) }
+        g.cornerPress = null
+    }
+
     /** 撤掉全部键的待触发长按（detach 收尾用：视图没了不能再往上屏塞字母） */
     private fun cancelAllLongPresses() {
-        keyGestures.values.forEach { cancelLongPressUppercase(it) }
+        keyGestures.values.forEach { g ->
+            cancelLongPressUppercase(g)
+            cancelCornerPress(g)
+        }
     }
 
     /**
@@ -1380,6 +1401,20 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 g.pageAtDown = symbolPageInGroup
                 // 上一次性手势残留的计时器（上一轮没收到 UP / CANCEL 的极端情况），只清本键
                 cancelLongPressUppercase(g)
+                cancelCornerPress(g)
+                // 角标长按：中文拼音态按住不放 → 上屏该键右上角的数字 / 符号。
+                // 只在 DOWN 起计时，MOVE 超阈值即撤销（与转大写同一套判据）。
+                if (canLongPressCorner(c)) {
+                    val corner = Runnable {
+                        if (!g.consumed) {
+                            g.consumed = true
+                            KeyFeedback.fire(TapSound.G_SYMBOL)
+                            listener?.onCommitText(CornerLabels.of(c))
+                        }
+                    }
+                    g.cornerPress = corner
+                    postDelayed(corner, android.view.ViewConfiguration.getLongPressTimeout().toLong())
+                }
                 // 小写英文长按转大写：到系统长按时长仍没抬手才上一个大写字母。
                 // 只在 DOWN 起计时（符号层的滑动翻页在 MOVE 里按 24dp 判定，两条手势互不打扰）。
                 if (canLongPressUpper(c)) {
@@ -1413,6 +1448,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 ) {
                     cancelLongPressUppercase(g)
                 }
+                // 角标长按同一条判据：手指划动 = 用户在改按别的键，不该再塞进一个符号
+                if (g.cornerPress != null &&
+                    (abs(event.rawX - g.startX) > touchSlop ||
+                        abs(event.rawY - g.startY) > touchSlop)
+                ) {
+                    cancelCornerPress(g)
+                }
                 // 符号层：水平滑动在「当前分组内」翻页（不切换分组）。
                 // 基准点取本键自己按下时的位置：另一根手指按着别的键（或按在别处滑动）
                 // 时，dx 不会被算成它的位移，轻点也不会被误判成翻页（BUG.md L-1439）。
@@ -1444,6 +1486,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             MotionEvent.ACTION_POINTER_DOWN -> {
                 // 只撤**本键**的长按：另一根手指按在别的键上时，这行不会碰到它的状态（L-1436）
                 cancelLongPressUppercase(g)
+                cancelCornerPress(g)
                 keyViews[c]?.setPressedVisual(true)
                 pressedKeyPointers++
                 return true
@@ -1461,6 +1504,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 // 抬手即作废待触发的大写：长按成功的场合 g.consumed 已被置位，
                 // 下面不会再上小写；没到时长就抬手则按普通点击走
                 cancelLongPressUppercase(g)
+                cancelCornerPress(g)
                 keyViews[c]?.setPressedVisual(false)
                 // 层 / 符号页在手势中途被改过（另一根手指点了「符号」或翻了页）⇒ 这个键此刻
                 // 代表的内容已不是用户按下时看到的那个，上屏等于把他没按过的字符塞进去（L-1437）。
@@ -1485,6 +1529,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             }
             MotionEvent.ACTION_CANCEL -> {
                 cancelLongPressUppercase(g)
+                cancelCornerPress(g)
                 keyViews[c]?.setPressedVisual(false)
                 g.consumed = false
                 // 取消是一个手势整体作废：所有指针都不在了，计数直接归零
@@ -4261,6 +4306,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
             // 关掉，这里补的是「它存在但没内容」这件事。非空标签走 setter 的赋值，不进这个分支。
             if (layer == LAYER_SYMBOL && key.label.isEmpty()) key.contentDescription = TEXT_EMPTY_SLOT
             key.subLabel = if (showHint) shuangpinHint(c) else ""
+            // 右上角角标：只在中文拼音的字母层画（英文态字母就是正文、大写锁定同理）；
+            // 符号层 / 数字层清空，免得符号页的键右上角还挂着数字
+            key.cornerLabel = if (layer == LAYER_LETTER && !englishMode && !capsMode) {
+                CornerLabels.of(c)
+            } else {
+                ""
+            }
             // u/i/v 键的 sh/ch/zh 用红色显示在下方（与韵母同区域，追加在后）
             key.subLabelRed = if (showHint) shuangpinRedHint(c) else ""
         }
