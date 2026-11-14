@@ -71,6 +71,12 @@ class VoiceSettingsActivity : ComponentActivity() {
     private lateinit var cardAzureCredentials: View
     private lateinit var cardBaiduCredentials: View
     private lateinit var cardDeepgramCredentials: View
+    private lateinit var cardLocalAsr: View
+    private lateinit var textLocalAsrDesc: android.widget.TextView
+    private lateinit var textLocalAsrStatus: android.widget.TextView
+    private lateinit var progressLocalAsr: android.widget.ProgressBar
+    private lateinit var btnLocalAsrDownload: android.widget.Button
+    private lateinit var btnLocalAsrDelete: android.widget.Button
     private lateinit var spinnerVoiceBackend: UserAwareSpinner
     private lateinit var editXfAppId: EditText
     private lateinit var editXfApiKey: EditText
@@ -305,6 +311,12 @@ class VoiceSettingsActivity : ComponentActivity() {
         cardAzureCredentials = findViewById(R.id.card_azure_credentials)
         cardBaiduCredentials = findViewById(R.id.card_baidu_credentials)
         cardDeepgramCredentials = findViewById(R.id.card_deepgram_credentials)
+        cardLocalAsr = findViewById(R.id.card_local_asr)
+        textLocalAsrDesc = findViewById(R.id.text_local_asr_desc)
+        textLocalAsrStatus = findViewById(R.id.text_local_asr_status)
+        progressLocalAsr = findViewById(R.id.progress_local_asr)
+        btnLocalAsrDownload = findViewById(R.id.btn_local_asr_download)
+        btnLocalAsrDelete = findViewById(R.id.btn_local_asr_delete)
         spinnerVoiceBackend = findViewById(R.id.spinner_voice_backend)
         editXfAppId = findViewById(R.id.edit_xf_app_id)
         editXfApiKey = findViewById(R.id.edit_xf_api_key)
@@ -425,6 +437,11 @@ class VoiceSettingsActivity : ComponentActivity() {
 
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
         }
+
+        // 本机离线卡片：一个按钮三种语义（下载 / 取消 / 重下），删除只在就绪时出现
+        btnLocalAsrDownload.setOnClickListener { onLocalAsrDownloadClicked() }
+        btnLocalAsrDelete.setOnClickListener { onLocalAsrDeleteClicked() }
+        refreshLocalAsrStatus()
 
         // 凭据输入框的标签用 hint 下发（values/strings.xml 默认禁改）
         textXfDesc.text = if (prefs.hasUnreadableXfCredential) {
@@ -740,6 +757,77 @@ class VoiceSettingsActivity : ComponentActivity() {
         cardAzureCredentials.visibility = if (enabled && backend == VoiceBackend.AZURE) View.VISIBLE else View.GONE
         cardBaiduCredentials.visibility = if (enabled && backend == VoiceBackend.BAIDU) View.VISIBLE else View.GONE
         cardDeepgramCredentials.visibility = if (enabled && backend == VoiceBackend.DEEPGRAM) View.VISIBLE else View.GONE
+        cardLocalAsr.visibility = if (enabled && backend == VoiceBackend.LOCAL) View.VISIBLE else View.GONE
+        if (enabled && backend == VoiceBackend.LOCAL) refreshLocalAsrStatus()
+    }
+
+    /**
+     * 「本机离线」卡片的状态行 / 按钮态。
+     *
+     * 三个状态各有各的按钮语义：未下载 = 下载；下载中 = 取消；已就绪 = 删除。
+     * 下载进度走同一条状态行 + 进度条，不弹对话框（设置页是全屏卡片，弹窗会挡住说明文案）。
+     */
+    private fun refreshLocalAsrStatus(progress: Int? = null) {
+        if (::textLocalAsrStatus.isInitialized.not()) return
+        val ready = LocalAsrModel.isReady(this)
+        val used = LocalAsrModel.usedBytes(this)
+        val running = LocalAsrDownloader.isRunning()
+        textLocalAsrDesc.text = TEXT_LOCAL_ASR_DESC
+        when {
+            running -> {
+                val p = progress ?: 0
+                textLocalAsrStatus.text = "正在下载模型… $p%（完成后自动解包写入本机）"
+                progressLocalAsr.visibility = View.VISIBLE
+                progressLocalAsr.progress = p
+                btnLocalAsrDownload.text = TEXT_LOCAL_ASR_CANCEL
+                btnLocalAsrDelete.visibility = View.GONE
+            }
+
+            ready -> {
+                textLocalAsrStatus.text = "模型已就绪（占用 ${used / (1024 * 1024)} MB）"
+                progressLocalAsr.visibility = View.GONE
+                btnLocalAsrDownload.text = TEXT_LOCAL_ASR_DOWNLOAD
+                btnLocalAsrDelete.visibility = View.VISIBLE
+            }
+
+            else -> {
+                textLocalAsrStatus.text = "模型未下载（当前占用 ${used / (1024 * 1024)} MB）"
+                progressLocalAsr.visibility = View.GONE
+                btnLocalAsrDownload.text = TEXT_LOCAL_ASR_DOWNLOAD
+                btnLocalAsrDelete.visibility = View.GONE
+            }
+        }
+    }
+
+    /** 下载按钮：未就绪 = 开下；下载中 = 取消 */
+    private fun onLocalAsrDownloadClicked() {
+        if (LocalAsrDownloader.isRunning()) {
+            LocalAsrDownloader.cancel()
+            refreshLocalAsrStatus(0)
+            return
+        }
+        refreshLocalAsrStatus(0)
+        LocalAsrDownloader.download(
+            // 用 applicationContext：用户可能下载到一半就退出设置页，模型仍应下完（也不把 Activity 拖住）
+            context = applicationContext,
+            onProgress = { pct -> runOnUiThread { if (!isFinishing && !isDestroyed) refreshLocalAsrStatus(pct) } },
+            onDone = { ok, reason ->
+                runOnUiThread {
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    refreshLocalAsrStatus(if (ok) 100 else 0)
+                    if (!ok) {
+                        textLocalAsrStatus.text = reason ?: "下载失败"
+                    }
+                }
+            },
+        )
+        refreshLocalAsrStatus(0)
+    }
+
+    /** 删除按钮：只删本机模型目录，不动任何凭据 / 偏好 */
+    private fun onLocalAsrDeleteClicked() {
+        LocalAsrDownloader.delete(this)
+        refreshLocalAsrStatus(0)
     }
 
     /** 下拉当前选中的后端；下标异常时回落配置里的值（导入的未知取值不被静默改写） */
@@ -1343,6 +1431,12 @@ class VoiceSettingsActivity : ComponentActivity() {
         val deepgramKeyValue = credentialText(editDeepgramApiKey)
         val deepgramModelValue = editDeepgramModel.text.toString().trim()
         val deepgramLanguageValue = editDeepgramLanguage.text.toString().trim()
+        if (voiceEnabled && backend == VoiceBackend.LOCAL && !LocalAsrModel.isReady(this)) {
+            // 本机离线：模型没下完就不能保存（否则用户在键盘上按住说话只会看到「模型未就绪」）
+            Diagnostics.w(TAG, "saveAndRestart: 本机离线模型未就绪")
+            textLocalAsrStatus.text = "模型未下载：请先点下面的「下载模型」"
+            return false
+        }
         if (voiceEnabled && backend == VoiceBackend.XF) {
             // 讯飞在线：三件凭据缺一不可（缺哪个就在哪个框上标红，不重启、不写盘）
             if (appIdValue.trim().isEmpty()) {
@@ -1839,6 +1933,15 @@ class VoiceSettingsActivity : ComponentActivity() {
         const val TEXT_BACKEND_AZURE = "Azure（短音频识别）"
         const val TEXT_BACKEND_BAIDU = "百度智能云（短语音识别）"
         const val TEXT_BACKEND_DEEPGRAM = "Deepgram（Pre-recorded）"
+        const val TEXT_BACKEND_LOCAL = "本机离线（SenseVoice 快速整句）"
+
+        /** 本机离线识别：模型不随包，按需下载 */
+        const val TEXT_LOCAL_ASR_DESC = "本机离线识别：不联网、不需要任何 Key。" +
+            "首次使用要在本机下载 SenseVoice small（整句识别，约 163 MB 压缩包 / 落地 230 MB 级），" +
+            "松手后一次性解码，长句会有零点几秒到一两秒的滞后。"
+        const val TEXT_LOCAL_ASR_DOWNLOAD = "下载模型"
+        const val TEXT_LOCAL_ASR_CANCEL = "取消下载"
+        const val TEXT_LOCAL_ASR_DELETE = "删除模型"
 
         /** 百度短语音识别：API Key / Secret Key / dev_pid（标签走 hint，文案不进 strings.xml） */
         const val TEXT_BAIDU_DESC = "百度智能云「短语音识别标准版」：填 API Key（AK）与 Secret Key（SK），" +
@@ -1919,10 +2022,12 @@ class VoiceSettingsActivity : ComponentActivity() {
 
         /** 后端下拉的取值与显示文案（一一对应，靠下标对应） */
         val BACKEND_VALUES = arrayOf(
+            VoiceBackend.LOCAL,
             VoiceBackend.CAPS, VoiceBackend.XF, VoiceBackend.OAI, VoiceBackend.ALI,
             VoiceBackend.TENCENT, VoiceBackend.AZURE, VoiceBackend.BAIDU, VoiceBackend.DEEPGRAM,
         )
         val BACKEND_LABELS = arrayOf(
+            TEXT_BACKEND_LOCAL,
             TEXT_BACKEND_CAPS, TEXT_BACKEND_XF, TEXT_BACKEND_OAI, TEXT_BACKEND_ALI,
             TEXT_BACKEND_TENCENT, TEXT_BACKEND_AZURE, TEXT_BACKEND_BAIDU, TEXT_BACKEND_DEEPGRAM,
         )
