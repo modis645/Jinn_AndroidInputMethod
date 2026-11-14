@@ -182,6 +182,18 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 当前拼音串（全拼或双拼原文） */
     private var composing = StringBuilder()
 
+    /**
+     * 拼音可编辑的光标（[composing] 的插入位置）；**-1 = 末尾**，即默认「一路往后追加」。
+     *
+     * 点拼音条上某个字母 → 光标落到该处（见 [bindPinyinCaret]），之后按字母插在那里、
+     * 退格删它前面那个字母；点空白或双击复位回末尾。只在全拼档生效：双拼下显示串是
+     * 逐键展开的结果（与 [composing] 不是一一对应），按显示位置定位会错位。
+     */
+    private var pinyinCaret = -1
+
+    /** 拼音条上的光标标记（只用于显示，永远不进 [composing]） */
+    private val caretMark = "｜"
+
     /** 是否处于英文模式（字母直接上屏，不查候选） */
     private var englishMode = false
 
@@ -1159,6 +1171,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
             if (scrollY > oldScrollY) maybeAppendMoreCandidates()
         }
         pinyinBar = root.findViewById(R.id.pinyin_bar)
+        // 拼音可编辑：点拼音条上的某个字母把光标落到那儿（见 bindPinyinCaret）
+        bindPinyinCaret()
         btnClearCandidates = root.findViewById(R.id.btn_clear_candidates)
         // 清空候选：完全清掉拼音串 / 候选 / 预测，候选栏回到默认的 6 按钮功能面板。
         // （2026-09-20 起取代「长按退格整串清空拼音」的隐式手势；✕ 仅在候选/预测/拼音串
@@ -2815,7 +2829,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 releaseCapsOneShot()
                 return
             }
-            composing.append(c)
+            insertLetter(c)
             refreshCandidateBar()
             return
         }
@@ -2851,8 +2865,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
             releaseCapsOneShot()
             return
         }
-        // 中文模式：追加到拼音串并查候选
-        composing.append(c)
+        // 中文模式：追加到拼音串并查候选（拼音条被点过就插在光标处，见 [insertLetter]）
+        insertLetter(c)
         // 按键热路径唯一的一处计时：只在 debug 构建里真跑（release 下 start 返回 null，
         // 整段退化成一次空判断），用来给「按键后候选刷新」一个实测上界，见 PerfSpan
         val perf = PerfSpan.start("按键候选")
@@ -3053,6 +3067,50 @@ class PinyinKeyboardView @JvmOverloads constructor(
         listener?.onDeleteAll()
     }
 
+    // ── 拼音可编辑（点选定位 / 插入 / 删该字符）─────────────
+
+    /** 有效插入位置：-1（末尾）→ composing.length；越界一律夹回合法范围 */
+    private fun insertionPoint(): Int =
+        if (pinyinCaret < 0) composing.length else pinyinCaret.coerceIn(0, composing.length)
+
+    /** 往拼音串放一个字母：光标有效就插在该处并右移，否则追加（-1 情形与历史行为逐字节一致） */
+    private fun insertLetter(c: Char) {
+        val at = insertionPoint()
+        composing.insert(at, c)
+        if (pinyinCaret >= 0) pinyinCaret = at + 1
+    }
+
+    /** 显示串里算作「拼音字母」的字符：音节分隔符与光标标记都不计数 */
+    private fun isPinyinLetterChar(ch: Char): Boolean = ch in 'a'..'z' || ch in 'A'..'Z'
+
+    /**
+     * 拼音条点按定位。
+     *
+     * 显示的串是「按音节打标」的结果（与 composing 不是逐字符对应），所以这里不按字符下标换算，
+     * 而是数**点之前有多少个字母**：第 N 个字母之后就是 composing 的第 N 位。
+     * 双拼下显示串由逐键展开得到，多个字母可能来自一个键，按下标定位会错位 —— 该档不支持点选。
+     */
+    private fun bindPinyinCaret() {
+        viewCandidatePinyin.setOnTouchListener { _, event ->
+            if (event.actionMasked != MotionEvent.ACTION_UP) return@setOnTouchListener false
+            if (shuangpinMode || composing.isEmpty() || layer != LAYER_LETTER) return@setOnTouchListener false
+            val layout = viewCandidatePinyin.layout ?: return@setOnTouchListener false
+            val shown = viewCandidatePinyin.text?.toString().orEmpty()
+            val offset = layout.getOffsetForPosition(event.x, event.y)
+            var letters = 0
+            var i = 0
+            val limit = offset.coerceIn(0, shown.length)
+            while (i < limit) {
+                if (isPinyinLetterChar(shown[i])) letters++
+                i++
+            }
+            pinyinCaret = letters
+            Diagnostics.i(TAG, "拼音光标: 定位到第 $letters 位（共 ${composing.length}）")
+            refreshCandidateBar()
+            true
+        }
+    }
+
     /** 删除一个字符（有拼音串删拼音，否则删已上屏） */
     private fun deleteOne() {
         // 搜索模式：优先删拼音串末尾，否则删搜索框文本
@@ -3066,7 +3124,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
             return
         }
         if (composing.isNotEmpty()) {
-            composing.deleteCharAt(composing.length - 1)
+            // 拼音可编辑：光标有效时删它**前面**那个字母，否则删末尾（历史行为）
+            val at = insertionPoint()
+            if (at > 0) composing.deleteCharAt(at - 1)
+            if (pinyinCaret >= 0) pinyinCaret = (at - 1).coerceAtLeast(0)
             refreshCandidateBar()
             if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "退格删拼音: ${composing}")
         } else if (lastPredictions.isNotEmpty() && predictionsEnabled()) {
@@ -3220,8 +3281,30 @@ class PinyinKeyboardView @JvmOverloads constructor(
      */
     private fun showPinyin(text: String?) {
         pinyinBar.visibility = if (text.isNullOrEmpty()) View.GONE else View.VISIBLE
-        viewCandidatePinyin.text = text.orEmpty()
+        viewCandidatePinyin.text = if (text.isNullOrEmpty()) "" else withCaret(text)
         applyPinyinInset()
+    }
+
+    /**
+     * 在全拼档的显示串里插入光标标记。
+     *
+     * 显示串是按音节打标后的结果（含分隔符），光标位置按**字母计数**换算，
+     * 不能直接用 composing 的下标——那样标记会落在某个音节中间。
+     */
+    private fun withCaret(text: String): String {
+        if (pinyinCaret < 0 || shuangpinMode) return text
+        var letters = 0
+        var i = 0
+        while (i < text.length) {
+            if (isPinyinLetterChar(text[i])) {
+                if (letters + 1 == pinyinCaret) {
+                    return text.substring(0, i + 1) + caretMark + text.substring(i + 1)
+                }
+                letters++
+            }
+            i++
+        }
+        return text + caretMark
     }
 
     /**
@@ -5859,6 +5942,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             lastPredictions.isEmpty() && lastCommittedWord.isEmpty()
         ) return
         composing.clear()
+        pinyinCaret = -1
         lastCandidates = emptyList()
         lastPredictions = emptyList()
         lastCommittedWord = ""
