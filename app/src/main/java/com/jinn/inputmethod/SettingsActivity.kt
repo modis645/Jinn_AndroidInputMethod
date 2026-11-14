@@ -48,6 +48,9 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var spinnerShuangpin: UserAwareSpinner
 
     private lateinit var btnEnable: Button
+
+    /** 用户是否刚点了「启用」出去（回来后要补一次「切换」：启用 ≠ 选中） */
+    private var awaitingEnable = false
     private lateinit var btnPick: Button
     private lateinit var btnSave: Button
     private lateinit var textTest: TextView
@@ -364,11 +367,11 @@ class SettingsActivity : ComponentActivity() {
         loadPrefs()
         // 之后 Spinner 若回调（含恢复实例状态），只有「用户触摸过」才会写配置
 
-        btnEnable.setOnClickListener { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) }
-        btnPick.setOnClickListener {
-            val manager = getSystemService(INPUT_METHOD_SERVICE) as? InputMethodManager
-            manager?.showInputMethodPicker()
+        btnEnable.setOnClickListener {
+            awaitingEnable = true
+            startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
         }
+        btnPick.setOnClickListener { pickInputMethod() }
         btnSave.setOnClickListener { saveAndRestart() }
 
         // 生成用户词库（台账查看 / 合并 / 导出 / 导入）：入口与「存储占用统计」同行
@@ -469,6 +472,55 @@ class SettingsActivity : ComponentActivity() {
         if (::textTranslateState.isInitialized) refreshTranslateState()
         // 从分类词库页返回：刚下完 2 级词库时提醒态要收回去，否则按钮一直亮着
         refreshDictEntryEmphasis()
+        // 首启引导：每次回到本页都按系统真实状态重写这两个按钮（启用 ≠ 选中，是两件事）
+        refreshImeStatus()
+    }
+
+    // ── 启用 / 切换状态 ─────────────────────────────────────
+
+    /** 本应用输入法在系统里的组件名，与 AndroidManifest 里那份 service 完全对应 */
+    private fun imeComponentId(): String = "$packageName/${JinnIme::class.java.name}"
+
+    private fun isImeEnabled(): Boolean {
+        val imm = getSystemService(INPUT_METHOD_SERVICE) as? InputMethodManager ?: return false
+        return imm.enabledInputMethodList.any { it.packageName == packageName }
+    }
+
+    private fun isImeDefault(): Boolean =
+        Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD) == imeComponentId()
+
+    private fun pickInputMethod() {
+        val manager = getSystemService(INPUT_METHOD_SERVICE) as? InputMethodManager
+        manager?.showInputMethodPicker()
+    }
+
+    /**
+     * 首启引导：把「未启用 / 已启用但没选中 / 已就绪」三态写在「启用」这个按钮上。
+     *
+     * 为什么不做弹窗或额外卡片：系统不允许 App 自己替用户勾选输入法（只能跳
+     * [Settings.ACTION_INPUT_METHOD_SETTINGS] 让用户勾），所以「一条龙」只能靠**回来时补一步**——
+     * 点「启用」出去、勾完返回，若已启用就自动弹一次切换面板，用户不必自己再找「切换输入法」。
+     * 状态只改按钮文案与字重，不动布局、不加第二行小字，避免首启页视觉变重。
+     */
+    private fun refreshImeStatus() {
+        if (!::btnEnable.isInitialized) return
+        val enabled = isImeEnabled()
+        val ready = enabled && isImeDefault()
+        val want = when {
+            ready -> TEXT_IME_READY
+            enabled -> TEXT_IME_ENABLED_NOT_CURRENT
+            else -> getString(R.string.settings_enable_ime)
+        }
+        if (btnEnable.text?.toString() != want) btnEnable.text = want
+        btnEnable.setTypeface(null, if (ready) Typeface.NORMAL else Typeface.BOLD)
+        if (awaitingEnable && enabled) {
+            awaitingEnable = false
+            // 400ms 是给系统设置页收起、输入法列表状态落盘留的余量；弹太早面板里还是旧状态
+            btnEnable.postDelayed({
+                if (!isFinishing && !isDestroyed) pickInputMethod()
+            }, IME_SWITCH_DELAY_MS)
+        }
+        Diagnostics.i(TAG, "输入法状态: enabled=$enabled ready=$ready")
     }
 
     /**
@@ -1627,6 +1679,13 @@ class SettingsActivity : ComponentActivity() {
 
         // ── 配置备份文案（strings.xml 默认不改动，文案收敛在此处） ──
         const val TEXT_EXPORT_CONFIG = "导出配置文件"
+
+    /** 「启用」按钮的另两态（第一态直接用系统的 settings_enable_ime 文案） */
+    const val TEXT_IME_ENABLED_NOT_CURRENT = "已启用，去切换"
+    const val TEXT_IME_READY = "幻影输入法已就绪"
+
+    /** 「启用」返回后补弹切换面板的延时（给系统设置页收起与状态落盘留余量） */
+    const val IME_SWITCH_DELAY_MS = 400L
         const val TEXT_IMPORT_CONFIG = "导入配置文件"
         const val TEXT_CONFIG_HINT = "AES-256 加密  密码只能用汉字  导入时要输密码"
         const val TEXT_EXPORT_DESC = "导出内容：全部设置项、用户词频\n" +
