@@ -18,6 +18,7 @@ object SpeechClients {
         onState: (LinkState, String?) -> Unit,
         onMessage: (RecognitionMessage) -> Unit,
     ): SpeechClient = when (prefs.voiceBackend) {
+        VoiceBackend.LOCAL -> LocalSenseVoiceClient(prefs, onState, onMessage)
         VoiceBackend.XF -> XfIatClient(prefs, onState, onMessage)
         VoiceBackend.OAI -> OpenAiAsrClient(prefs, onState, onMessage)
         VoiceBackend.ALI -> AliAsrClient(prefs, onState, onMessage)
