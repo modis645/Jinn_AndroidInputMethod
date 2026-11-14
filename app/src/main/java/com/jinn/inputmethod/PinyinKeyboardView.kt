@@ -3094,15 +3094,25 @@ class PinyinKeyboardView @JvmOverloads constructor(
         viewCandidatePinyin.setOnTouchListener { _, event ->
             if (event.actionMasked != MotionEvent.ACTION_UP) return@setOnTouchListener false
             if (shuangpinMode || composing.isEmpty() || layer != LAYER_LETTER) return@setOnTouchListener false
-            val layout = viewCandidatePinyin.layout ?: return@setOnTouchListener false
-            val shown = viewCandidatePinyin.text?.toString().orEmpty()
-            val offset = layout.getOffsetForPosition(event.x, event.y)
+            val shown: String = viewCandidatePinyin.text?.toString() ?: ""
+            // 不取 TextView.layout（View 上的同名方法会让属性解析落到别处），直接按字号逐字量宽：
+            // 拼音条是单行、字号固定，这样算出的“点在第几个字”与视觉一致。
+            val paint = viewCandidatePinyin.paint
+            val tapX = event.x - viewCandidatePinyin.totalPaddingLeft
+            var idx = 0
+            var acc = 0f
+            while (idx < shown.length) {
+                val w = paint.measureText(shown, idx, idx + 1)
+                if (acc + w / 2f >= tapX) break
+                acc += w
+                idx++
+            }
             var letters = 0
-            var i = 0
-            val limit = offset.coerceIn(0, shown.length)
-            while (i < limit) {
-                if (isPinyinLetterChar(shown[i])) letters++
-                i++
+            var k = 0
+            while (k < idx) {
+                val ch = shown[k]
+                if (ch in 'a'..'z' || ch in 'A'..'Z') letters++
+                k++
             }
             pinyinCaret = letters
             Diagnostics.i(TAG, "拼音光标: 定位到第 $letters 位（共 ${composing.length}）")
