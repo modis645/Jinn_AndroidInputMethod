@@ -74,6 +74,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
         fun onBackspace()
         /** 删除键三击：清空已上屏的全部文本 */
         fun onDeleteAll()
+
+        /**
+         * 长按退格清空后**下滑恢复**：把刚才清掉的文本原样写回，返回是否真的写回。
+         *
+         * 默认返回 false：只有真正的 IME 实现方会记录「清空前那一段」，
+         * 测试替身之类的实现方不必随接口扩展改动。
+         */
+        fun onRestoreDeletedText(): Boolean = false
         /**
          * 长按空格请求**开始录音**（26 键按住说话，不切页面）。
          *
@@ -1046,6 +1054,21 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 双击后第三次按住超过该时长触发全部清空（长按确认，杜绝误触） */
     private val longPressClearMs = 800L
 
+    /** 长按退格到点清空输入框的阈值：比连删起始（[backspaceRepeatDelayMs]）晚，但不至于让人等 */
+    private val backspaceClearHoldMs = 600L
+
+    /** 清空后「下滑恢复」的触发距离（与键面无关的绝对位移，约 28dp） */
+    private val restoreSlopPx: Int by lazy { (28 * resources.displayMetrics.density).toInt() }
+
+    /** 本次按下是否已执行过「清空」；下滑恢复只认这一种情形 */
+    private var backspaceClearDone = false
+
+    /** 本次按下是否已下滑恢复过（防止一次按住里反复写回） */
+    private var backspaceRestored = false
+
+    /** 本次按下的基准 Y（raw）：下滑恢复按相对位移判定 */
+    private var backspaceDownRawY = 0f
+
     /**
      * 「双击 → 长按」清空手势的有效窗口：双击完成后，必须在该时长内再次按下
      * 退格，才会挂上清空检测。
@@ -1078,19 +1101,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private val backspaceRepeatRunnable = object : Runnable {
         override fun run() {
             if (!backspaceHeld) return
-            // 逐字连删 + **按按住时长加速**（2026-11-14，用户要「长按退格批量删除」）：
-            // 1s 内 1 字/次（等于原来的手感），之后 2 → 3 → 5 → 8 字/次递增。
-            // 间隔仍是 55ms，所以长按到底约 145 字/秒，删一大段不用一直按。
+            // 逐字连删（只跑 380→600ms 这一小段：到 600ms 就转成「清空」，见 [backspaceClearRunnable]）
             // 拼音串删空后继续删已上屏正文，与逐字连删同一条路径（deleteOne 自己分流）。
-            val held = System.currentTimeMillis() - backspacePressStart
-            val step = when {
-                held >= 4000 -> 8
-                held >= 2800 -> 5
-                held >= 1800 -> 3
-                held >= 1000 -> 2
-                else -> 1
-            }
-            repeat(step) { deleteOne() }
+            deleteOne()
             // 按住期间**不发声**：真实键盘的连删是一次按下里的连续动作，听感上只有第一下 ——
             // 每 55ms 响一次会变成机关枪，与实物不符。发声只留在按下那一下
             // （见 [handleBackspaceTouch]）；「双击 + 长按清空」那一次仍然发，
@@ -2964,22 +2977,22 @@ class PinyinKeyboardView @JvmOverloads constructor(
             MotionEvent.ACTION_DOWN -> {
                 backspaceHeld = true
                 backspacePressStart = System.currentTimeMillis()
+                backspaceDownRawY = event.rawY
+                backspaceClearDone = false
+                backspaceRestored = false
                 deleteOne()
                 // 按下立即发声，**只有这一声**：按住不松手时连删循环不再发声
                 // （一次按下 = 一次声音，与真实键盘一致，见 [backspaceRepeatRunnable]）
                 KeyFeedback.fire(TapSound.G_ERASE)
                 backspaceHandler.removeCallbacks(backspaceRepeatRunnable)
                 backspaceHandler.postDelayed(backspaceRepeatRunnable, backspaceRepeatDelayMs)
-                // 已处于「双击后」状态：本次长按到阈值触发清空。
-                // 必须校验双击是否刚发生，双击态会一直残留，不校验时间的话，
-                // 用户点两下退格（删两个字，高频操作）之后任何一次长按都会清空输入框。
+                // 长按到 600ms 直接清空（沙鸥同款）：不再要求「先双击」，也不再按按住时长加档
+                backspaceHandler.removeCallbacks(backspaceClearRunnable)
+                backspaceHandler.postDelayed(backspaceClearRunnable, backspaceClearHoldMs)
+                // 双击态只用于诊断残留：清空不再依赖它，这里顺手把过期的双击计数清掉
                 if (backspaceTapCount == 2 &&
-                    System.currentTimeMillis() - backspaceLastTapAt <= clearGestureWindowMs
+                    System.currentTimeMillis() - backspaceLastTapAt > clearGestureWindowMs
                 ) {
-                    backspaceHandler.removeCallbacks(clearOnLongPressRunnable)
-                    backspaceHandler.postDelayed(clearOnLongPressRunnable, longPressClearMs)
-                } else if (backspaceTapCount == 2) {
-                    // 双击态已过期（过了窗口才按下）：立即失效，杜绝后续误触
                     backspaceTapCount = 0
                 }
                 btnBackspace.isPressed = true
@@ -2996,6 +3009,16 @@ class PinyinKeyboardView @JvmOverloads constructor(
                     stopBackspaceRepeat()
                     Diagnostics.i(TAG, "退格连删: 手指滑出键面，停止删除")
                 }
+                // 清空之后**下滑**恢复（沙鸥同款）：只认「已经清空、还没恢复、位移够」三件事，
+                // 手指仍在按住状态，所以恢复是一次可反悔的操作，不是另一条命令。
+                if (backspaceHeld && backspaceClearDone && !backspaceRestored &&
+                    event.rawY - backspaceDownRawY >= restoreSlopPx
+                ) {
+                    backspaceRestored = true
+                    val ok = listener?.onRestoreDeletedText() == true
+                    KeyFeedback.fire(if (ok) TapSound.G_TEXT else TapSound.G_ERASE, force = true)
+                    Diagnostics.i(TAG, "退格长按后下滑: 恢复清空前的文本 ok=$ok")
+                }
                 return true
             }
 
@@ -3005,8 +3028,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 backspaceHeld = false
                 val held = System.currentTimeMillis() - backspacePressStart
                 backspaceHandler.removeCallbacks(backspaceRepeatRunnable)
-                // 取消未触发的长按清空检测（第三次短按即松 → 不触发）
-                backspaceHandler.removeCallbacks(clearOnLongPressRunnable)
+                backspaceHandler.removeCallbacks(backspaceClearRunnable)
+                backspaceClearDone = false
+                backspaceRestored = false
                 // 短按（未进入连续删除）才算一次点击，用于双击判定
                 if (held < backspaceRepeatDelayMs) {
                     recordBackspaceTap()
@@ -3049,6 +3073,31 @@ class PinyinKeyboardView @JvmOverloads constructor(
             backspaceTapCount = 0
             backspaceLastTapAt = now
         }
+    }
+
+    /**
+     * 长按退格到点 → 清空输入框（沙鸥同款，2026-11-14）。
+     *
+     * 与「双击 + 长按」那套的区别：不要求先双击、也不依赖按住时长分档 —— 按住
+     * [backspaceClearHoldMs] 就到点清空。清空后**手指不松、向下滑**即可恢复
+     * （见 [handleBackspaceTouch] 的 ACTION_MOVE 分支与 [restoreSlopPx]）。
+     */
+    private val backspaceClearRunnable = Runnable {
+        if (!backspaceHeld) return@Runnable
+        // 清空前先停掉仍在跑的逐字连删：否则 55ms 还在发 DEL，部分宿主会把它当其它动作
+        backspaceHandler.removeCallbacks(backspaceRepeatRunnable)
+        backspaceTapCount = 0
+        KeyFeedback.fire(TapSound.G_ERASE, force = true)
+        clearComposingState()
+        if (isPanelSearch()) {
+            searchPanel?.clearSearch()
+            Diagnostics.i(TAG, "退格长按：清空搜索框（不动宿主输入框）")
+        } else {
+            // IME 侧会先把光标前的文本整段读下来再删 ⇒ 下滑时能原样写回
+            listener?.onDeleteAll()
+            Diagnostics.i(TAG, "退格长按：清空输入框（可下滑恢复）")
+        }
+        backspaceClearDone = true
     }
 
     /** 双击后长按达到阈值：全部清空 */
