@@ -1200,6 +1200,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         pinyinBar = root.findViewById(R.id.pinyin_bar)
         // 拼音可编辑：点拼音条上的某个字母把光标落到那儿（见 bindPinyinCaret）
         bindPinyinCaret()
+        // 长按拼音条 = 删掉末尾整个音节（点按只能一位一位删，改一整节拼音要点很多次）
+        viewCandidatePinyin.setOnLongClickListener { deleteLastSyllable() }
         btnClearCandidates = root.findViewById(R.id.btn_clear_candidates)
         // 清空候选：完全清掉拼音串 / 候选 / 预测，候选栏回到默认的 6 按钮功能面板。
         // （2026-09-20 起取代「长按退格整串清空拼音」的隐式手势；✕ 仅在候选/预测/拼音串
@@ -3182,6 +3184,31 @@ class PinyinKeyboardView @JvmOverloads constructor(
             refreshCandidateBar()
             true
         }
+    }
+
+    /**
+     * 长按拼音条：删掉末尾**整个音节**。
+     *
+     * 边界不自己写最大匹配 —— 引擎的 [PinyinEngine.markSyllables] 已按真实音节切开并在切不开时
+     * 原样返回，末尾最后一段的字母数就是该删的长度；整串只有一个音节时就是全删。
+     *
+     * 两种情况不动：① 双拼（按键与音节不是一对一，2 键=1 音节要另算，本版已不提供双拼）；
+     * ② 光标已被用户点到中间（他正在改那一段，此时删末尾会删掉他没在看的地方）。
+     *
+     * @return 是否消费了这次长按
+     */
+    private fun deleteLastSyllable(): Boolean {
+        if (shuangpinMode || composing.isEmpty() || layer != LAYER_LETTER) return false
+        if (pinyinCaret >= 0 && pinyinCaret != composing.length) return false
+        val full = composing.toString()
+        val tail = PinyinEngine.markSyllables(full).substringAfterLast('\'')
+        val count = (if (tail.isEmpty()) full.length else tail.length).coerceIn(1, composing.length)
+        composing.delete(composing.length - count, composing.length)
+        pinyinCaret = -1
+        KeyFeedback.fire(TapSound.G_ERASE, force = true)
+        Diagnostics.i(TAG, "拼音条长按: 删除末音节 \"$tail\"（剩 ${composing.length} 位）")
+        refreshCandidateBar()
+        return true
     }
 
     /** 删除一个字符（有拼音串删拼音，否则删已上屏） */
