@@ -92,6 +92,11 @@ import kotlin.math.min
             style = Paint.Style.STROKE
         }
 
+        /** 右上角角标用的画笔（与韵母提示同色系，字号在 [onDraw] 里按键高定） */
+        private val cornerTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            textAlign = Paint.Align.RIGHT
+        }
+
         /**
          * 套用皮肤（null = 回到默认令牌路径）。
          *
@@ -203,6 +208,19 @@ import kotlin.math.min
             set(value) {
                 field = value
                 cachedNormalLines = splitHintLines(value)
+                invalidate()
+            }
+
+        /**
+         * 键右上角的角标（数字 / 符号），空串 = 不画。
+         *
+         * 长按该键上屏的正是这段文字（见 [PinyinKeyboardView.handleKeyTouch] 的角标长按分支），
+         * 「显示即上屏」：键面画什么就上屏什么，不再另存一份映射。
+         */
+        var cornerLabel: String = ""
+            set(value) {
+                if (field == value) return
+                field = value
                 invalidate()
             }
 
@@ -379,6 +397,15 @@ import kotlin.math.min
             val hintRedColor = v?.hintRed ?: colorCorner
 
             drawKeyFace(canvas, rect)
+
+            // ── 右上角角标（数字 / 符号）：先画，后面每个分支都可能提前 return ──
+            if (cornerLabel.isNotEmpty()) {
+                cornerTextPaint.color = hintRedColor
+                cornerTextPaint.textSize = (h * CORNER_TEXT_RATIO).coerceIn(h * 0.16f, h * 0.3f)
+                val cx = w - inset - h * 0.02f
+                val cy = inset + cornerTextPaint.textSize
+                canvas.drawText(cornerLabel, cx, cy, cornerTextPaint)
+            }
 
             // ── 全拼模式：字母铺满按键居中（约 70% 键高），无双拼提示 ──
             if (fullPinyinStyle) {
@@ -618,6 +645,9 @@ import kotlin.math.min
 
             /** 韵母文本底部对齐位置（近按钮底边，0~1 相对键高） */
             const val SUB_BOTTOM_RATIO = 0.94f
+
+            /** 右上角角标字号（占键高比例）；绘制时再夹在 0.16~0.3 倍键高之间 */
+            const val CORNER_TEXT_RATIO = 0.22f
 
             /** 多行紧凑行距系数（<1 收窄行距，避免超出按键） */
             const val LINE_COMPACT_RATIO = 0.8f
