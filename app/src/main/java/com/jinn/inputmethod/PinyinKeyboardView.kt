@@ -1078,11 +1078,19 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private val backspaceRepeatRunnable = object : Runnable {
         override fun run() {
             if (!backspaceHeld) return
-            // 标准的逐字连删：拼音删空后继续删已上屏正文，直到松手。
-            // （2026-09-20 起原先「按住 ≥1.2s 且拼音 ≥12 字符就整串清空」的捷径已移除，
-            //  清空候选改由候选栏右侧 ✕ 按钮显式触发，见 [btnClearCandidates]；
-            //  「要连输入框一起清」仍是 [clearOnLongPressRunnable] 的「双击 + 长按」手势。）
-            deleteOne()
+            // 逐字连删 + **按按住时长加速**（2026-11-14，用户要「长按退格批量删除」）：
+            // 1s 内 1 字/次（等于原来的手感），之后 2 → 3 → 5 → 8 字/次递增。
+            // 间隔仍是 55ms，所以长按到底约 145 字/秒，删一大段不用一直按。
+            // 拼音串删空后继续删已上屏正文，与逐字连删同一条路径（deleteOne 自己分流）。
+            val held = System.currentTimeMillis() - backspacePressStart
+            val step = when {
+                held >= 4000 -> 8
+                held >= 2800 -> 5
+                held >= 1800 -> 3
+                held >= 1000 -> 2
+                else -> 1
+            }
+            repeat(step) { deleteOne() }
             // 按住期间**不发声**：真实键盘的连删是一次按下里的连续动作，听感上只有第一下 ——
             // 每 55ms 响一次会变成机关枪，与实物不符。发声只留在按下那一下
             // （见 [handleBackspaceTouch]）；「双击 + 长按清空」那一次仍然发，
