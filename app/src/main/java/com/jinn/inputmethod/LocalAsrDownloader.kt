@@ -33,9 +33,7 @@ internal object LocalAsrDownloader {
     @Volatile
     private var cancelled = false
 
-    /** 归档里两个成员的文件名（tar 里带目录前缀，按文件名后缀匹配） */
-    private const val MEMBER_MODEL = "/" + LocalAsrModel.MODEL_FILE
-    private const val MEMBER_TOKENS = "/" + LocalAsrModel.TOKENS_FILE
+    /** 归档里两个成员的文件名（见上：按文件名匹配，路径前缀不作要求） */
 
     private val http = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -138,9 +136,12 @@ internal object LocalAsrDownloader {
                             }
                             val entry = tar.nextEntry ?: break
                             if (entry.isDirectory) continue
-                            val name = entry.name
-                            val isModel = name.endsWith(MEMBER_MODEL)
-                            val isTokens = name.endsWith(MEMBER_TOKENS)
+                            // 只认**文件名**，不认整条路径：上游归档有的带一层目录
+                            // （`sherpa-onnx-sense-voice-…/model.int8.onnx`），有的直接平铺，
+                            // 按后缀匹配会在平铺时漏掉（表现为「归档里找不到模型」）。
+                            val base = entry.name.substringAfterLast('/')
+                            val isModel = base == LocalAsrModel.MODEL_FILE || base == "model.onnx"
+                            val isTokens = base == LocalAsrModel.TOKENS_FILE
                             if (!isModel && !isTokens) continue
                             val dst = File(tmpDir, if (isModel) LocalAsrModel.MODEL_FILE else LocalAsrModel.TOKENS_FILE)
                             dst.outputStream().use { out ->
