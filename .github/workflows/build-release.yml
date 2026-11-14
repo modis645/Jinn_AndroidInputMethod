@@ -47,6 +47,24 @@ jobs:
           chmod 600 "$RUNNER_TEMP/release.jks"
           ls -l "$RUNNER_TEMP/release.jks"
 
+      - name: 准备离线语音运行库（sherpa-onnx）
+        run: |
+          set -euo pipefail
+          url="https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.12.20/sherpa-onnx-static-link-onnxruntime-1.12.20.aar"
+          curl -fL --retry 3 --retry-delay 5 -o "$RUNNER_TEMP/sherpa.aar" "$url"
+          mkdir -p "$RUNNER_TEMP/sherpa"
+          unzip -q "$RUNNER_TEMP/sherpa.aar" -d "$RUNNER_TEMP/sherpa"
+          echo "--- AAR 内容 ---"
+          find "$RUNNER_TEMP/sherpa" -maxdepth 2 -type d | head -20
+          jar=$(find "$RUNNER_TEMP/sherpa" -name classes.jar | head -1)
+          [ -f "$jar" ] || { echo "AAR 里没有 classes.jar"; exit 1; }
+          mkdir -p app/libs app/src/main/jniLibs/arm64-v8a
+          cp "$jar" app/libs/sherpa-onnx.jar
+          count=$(find "$RUNNER_TEMP/sherpa" -path '*arm64-v8a*' -name '*.so' | wc -l)
+          [ "$count" -ge 1 ] || { echo "AAR 里没有 arm64-v8a 的 .so"; exit 1; }
+          find "$RUNNER_TEMP/sherpa" -path '*arm64-v8a*' -name '*.so' -exec cp {} app/src/main/jniLibs/arm64-v8a/ \;
+          ls -l app/libs app/src/main/jniLibs/arm64-v8a
+
       - name: 编译 release 包（正式签名）
         env:
           JINN_KEYSTORE_FILE: ${{ runner.temp }}/release.jks
