@@ -296,11 +296,13 @@ class Prefs(private val appContext: Context) {
         set(value) = sp.edit { putBoolean(KEY_USER_DICT_ENABLED, value) }
 
     /**
-     * 候选的智能预测词：选完一个词后，在候选栏预告下一个字词（默认关）。
-     * 打开后选完文字才会出现预测候选；关掉时完全不产生预测。
+     * 候选的智能预测词：选完一个词后，在候选栏预告下一个字词（默认开）。
+     *
+     * 默认开与幻影拼音的「上屏后联想默认选中」对齐：选完文字立刻有位可点，
+     * 不想用的用户在设置页关掉即可（关掉时完全不产生预测）。
      */
     var predictEnabled: Boolean
-        get() = boolOr(KEY_PREDICT_ENABLED, false)
+        get() = boolOr(KEY_PREDICT_ENABLED, true)
         set(value) = sp.edit { putBoolean(KEY_PREDICT_ENABLED, value) }
 
     /**
