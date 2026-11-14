@@ -36,6 +36,14 @@ object PinyinEngine {
     private const val MAX_PHRASES = 12
 
     /**
+     * 用户手动插入的音节分隔符（西文单引号）。
+     *
+     * 只影响切分：`xi'an` 会切成 `xi` + `an`（默认自动切分是 `xian` 一个音节）。
+     * 它不是词库字符，查词时先被剥掉（见 [query]），因此与历史行为完全兼容。
+     */
+    const val SEPARATOR_CHAR = '\''
+
+    /**
      * 模糊音变体的单字上限：比精确单字的 [MAX_CHARS] 小得多。
      *
      * 变体单字是「顺带给的兜底」，按 60 上限会把候选栏灌满、把精确单字推到更远；
@@ -2179,11 +2187,13 @@ object PinyinEngine {
      */
     fun query(input: String): Result {
         if (!loaded) return Result(emptyList(), emptyList(), "")
-        val raw = input.lowercase(Locale.ROOT)
+        // 输入里的用户分隔符（`'`）只参与切分，不参与查词：raw 去掉它才是词库键
+        val typed = input.lowercase(Locale.ROOT)
+        val raw = if (typed.indexOf(SEPARATOR_CHAR) >= 0) typed.replace(SEPARATOR_CHAR.toString(), "") else typed
         if (raw.isEmpty()) return Result(emptyList(), emptyList(), "")
 
         // 1. 切分音节（含 ue/ve 变体，兼容词库两种 üe 写法）
-        val (allSyllables, partial) = segment(raw)
+        val (allSyllables, partial) = segmentTyped(typed)
         // 音节数上限（BUG.md L-1282）：主查询原先**不限**，粘一串拼音进来时候选会按
         // 「音节 × 每音节上限」累积到几千条再全量排序，而渲染首屏只看前 [INITIAL_RENDERED_CANDIDATES] 条
         // （其余要用户横滑到末尾才分页追加）—— 计算与内存纯白费，且这条路径在主线程上，表现为长输入时按键发卡。
@@ -2676,6 +2686,11 @@ object PinyinEngine {
         if (input.isEmpty()) return input
         val (syllables, partial) = segment(input)
         if (syllables.isEmpty()) return input
+        // 用户自己插过分隔符：按他的段各自打标，段间保留他那一刀（不重排、不吞掉）
+        if (input.indexOf(SEPARATOR_CHAR) >= 0) {
+            return input.split(SEPARATOR_CHAR)
+                .joinToString(SEPARATOR_CHAR.toString()) { markSyllables(it) }
+        }
         // 直接拼进一个 StringBuilder：早先是 joinToString 一个串 + buildString 又一个
         // + replace("'","") 再一个整串，每键三次分配加一次全串比较。
         val marked = StringBuilder(input.length + syllables.size + 1)
@@ -2727,6 +2742,34 @@ object PinyinEngine {
         val value = dictionarySegmentation(input)?.let { Pair(it, "") } ?: greedySegment(input)
         segmentHit = SegmentHit(gen, input, value)   // 单条引用整体替换，不存在撕裂读
         return value
+    }
+
+    /**
+     * 带**用户分隔符**的音节切分（分隔符是西文单引号 `'`）。
+     *
+     * 自动切分只看词库：`xian` 恒切成 `xian`（词库里有「先」），用户想打「西安」时没法表达。
+     * 于是允许用户自己插 `'`：有分隔符就按它断开、每段各自走自动切分，段与段之间不再合并。
+     *
+     * 没有分隔符时**完全走** [segment]，连缓存键都是同一个 —— 保证老路径一个字节不变。
+     */
+    private fun segmentTyped(input: String): Pair<List<String>, String> {
+        if (!input.contains(SEPARATOR_CHAR)) return segment(input)
+        val parts = input.split(SEPARATOR_CHAR)
+        val syllables = ArrayList<String>(parts.size + 2)
+        var partial = ""
+        for ((i, part) in parts.withIndex()) {
+            if (part.isEmpty()) continue
+            val (seg, par) = segment(part)
+            syllables.addAll(seg)
+            // 末段未完成的音节（`xi'zh` 的 `zh`）仍按 partial 报给补全诊断；
+            // 非末段的残码没有意义（用户已经明确在那里断开），直接当音节带上
+            if (i == parts.lastIndex) {
+                partial = par
+            } else if (par.isNotEmpty()) {
+                syllables.add(par)
+            }
+        }
+        return Pair(syllables, partial)
     }
 
     /**
