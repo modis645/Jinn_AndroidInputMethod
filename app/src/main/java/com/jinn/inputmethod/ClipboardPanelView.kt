@@ -7,6 +7,7 @@ import android.view.ViewGroup
 import android.widget.BaseAdapter
 import android.widget.LinearLayout
 import android.widget.ListView
+import android.widget.ScrollView
 import android.widget.TextView
 import java.util.Locale
 
@@ -156,6 +157,17 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
 
     /** 图片条目专属的三个动作（文本条目时隐藏） */
     private lateinit var actionMove: TextView
+
+    /** 文本条目专属：把这条内容切成若干段，点哪段粘哪段（网址 / 手机号 / 中文词） */
+    private lateinit var actionSegment: TextView
+
+    /** 分词结果列表（盖在列表区上，点一段即粘贴并收起面板） */
+    private lateinit var segmentScroll: ScrollView
+    private lateinit var segmentList: LinearLayout
+
+    /** 分词面板打开前图片网格是否可见：收起时按原状还原，不误把网格打开/关掉 */
+    private var segmentGridWasVisible = false
+
     private var longPressItem: ClipboardDb.Item? = null
 
     /** 清空二次确认条（IME 内无窗口 token，用内联确认替代 AlertDialog） */
@@ -522,11 +534,12 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         // 菜单只出这三个：复制与保存不再露面（点击条目本身就是上屏，转移已覆盖「存到相册」），
         // 三个键各占 1/3 面板宽，比原先挤五个好按
         actionMove = tabButton("转图库") { imageAction(ClipboardImageAction.MoveToGallery) }
+        actionSegment = tabButton("分词") { openSegmentsAction() }
         actionFavorite = tabButton("收藏") { toggleFavorite() }
         actionDelete = tabButton("删除", TapSound.G_ERASE) { deleteItem() }
         actionDelete.setTextColor(context.getColor(R.color.danger))
         dangerButtons += actionDelete
-        val actions = listOf(actionMove, actionFavorite, actionDelete)
+        val actions = listOf(actionSegment, actionMove, actionFavorite, actionDelete)
         for (a in actions) actionBar.addView(a, LinearLayout.LayoutParams(0, dp(36), 1f))
         addView(actionBar, lp())
 
@@ -565,6 +578,18 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         confirmBar.addView(confirmOk, LinearLayout.LayoutParams(0, dp(36), 1f))
         confirmBar.addView(confirmCancel, LinearLayout.LayoutParams(0, dp(36), 1f))
         addView(confirmBar, lp())
+
+        // ── 分词结果（盖在列表区上：切分结果可能几十段，得能滚） ──
+        segmentList = LinearLayout(context).apply { orientation = VERTICAL }
+        segmentScroll = ScrollView(context).apply {
+            visibility = GONE
+            isFillViewport = true
+            setBackgroundColor(skinColor(context, skin.plate, R.color.app_bg))
+            addView(segmentList, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+            ))
+        }
+        addView(segmentScroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
     }
 
     /**
@@ -605,6 +630,8 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         // 用户切到「网址」再顺手确定，别的分类就一起没了。三条显示路径（`onPanelShown` /
         // `showItemMenu` / 这里）必须口径一致，漏一条就是这个缺陷。
         hideConfirmBar()
+        // 分词面板同理：切分类后列表内容换了，还挂着上一分类的分词结果等于粘错条目
+        closeSegments()
         currentCategory = category
         applyTabFaces()
         val imageMode = category == CATEGORY_IMAGE
@@ -679,6 +706,8 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     }
 
     private fun refresh(resetScroll: Boolean = false, refreshFavStrip: Boolean = true) {
+        // 数据整体重载时收起分词面板：它列的段来自**上一条**记录，留着就成了粘错内容
+        closeSegments()
         val tid = currentTraceId.ifEmpty { Diagnostics.traceId("CLIP") }
         currentTraceId = tid
         val category = currentCategory
@@ -1025,6 +1054,68 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         }
     }
 
+    /**
+     * 长按操作条的「分词」：把当前这条内容切成段，盖在列表区上逐段列出。
+     *
+     * 只做一件事 —— 让用户从一条长内容里挑一截粘进去（网址、手机号、某个词）。
+     * 分类、分组、收藏、加密一行不动：分词结果取自 [ClipboardDb.Item.content]，
+     * 与「点条目整条粘」用的是同一份原文，所以两边看到的字符必然一致。
+     */
+    private fun openSegmentsAction() {
+        val item = longPressItem ?: return
+        KeyFeedback.fire(TapSound.G_FUNC)
+        val segments = ClipboardSegments.split(item.content)
+        if (segments.isEmpty()) {
+            hint(TEXT_SEGMENT_EMPTY)
+            return
+        }
+        hideActionBar()
+        hideConfirmBar()
+        actionToken++
+        segmentList.removeAllViews()
+        // 首行给一句去向说明 + 点击即「取消」：IME 面板里没有返回键，用户得有个出口
+        val header = tabButton("分词（点一段即粘贴）", TapSound.G_FUNC) { closeSegments() }
+        header.setTextColor(skinColor(context, skin.functionGlyph, R.color.text_secondary))
+        segmentList.addView(header, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(32),
+        ))
+        for (segment in segments) {
+            val row = tabButton(segment, TapSound.G_TEXT) { pasteSegment(segment) }
+            segmentList.addView(row, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(36),
+            ))
+        }
+        segmentGridWasVisible = imageGrid.visibility == View.VISIBLE
+        imageGrid.visibility = View.GONE
+        listView.visibility = View.GONE
+        textEmpty.visibility = View.GONE
+        segmentScroll.visibility = View.VISIBLE
+        segmentScroll.scrollTo(0, 0)
+        Diagnostics.i(TAG, "[$currentTraceId] 分词: id=${item.id} 段数=${segments.size}")
+    }
+
+    /** 点中一段：与原条目点击同一语义（提交成功就收起面板；失败保持面板，提示由 IME 出） */
+    private fun pasteSegment(segment: String) {
+        if (isPasting) return
+        isPasting = true
+        val ok = listener?.onPaste(segment) ?: false
+        isPasting = false
+        if (ok) {
+            listener?.onClose()
+        } else {
+            Diagnostics.w(TAG, "分词粘贴: 片段未提交成功，保持面板")
+        }
+    }
+
+    /** 收起分词面板，把列表/网格按打开前的可见性还原 */
+    private fun closeSegments() {
+        if (segmentScroll.visibility != View.VISIBLE) return
+        segmentScroll.visibility = View.GONE
+        segmentList.removeAllViews()
+        listView.visibility = View.VISIBLE
+        imageGrid.visibility = if (segmentGridWasVisible) View.VISIBLE else View.GONE
+    }
+
     /** 长按条目：显示内联操作条（收藏/删除）。IME 内无窗口 token，不用 AlertDialog。 */
     private fun showItemMenu(item: ClipboardDb.Item) {
         // 与「清空」确认条互斥：两条都可见时按钮紧挨着，容易按到另一条上的操作
@@ -1042,6 +1133,8 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         // 图片条目才出「转图库」；收藏与删除两类条目共用
         val isImage = item.image != null
         actionMove.visibility = if (isImage) View.VISIBLE else View.GONE
+        // 分词只对文本有意义（图片行给不出词）
+        actionSegment.visibility = if (isImage) View.GONE else View.VISIBLE
 
         actionBar.visibility = View.VISIBLE
         Diagnostics.i(TAG, "[$currentTraceId] 长按菜单: 显示操作条 id=${item.id}")
@@ -1407,6 +1500,9 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
 
         /** 点 / 长按占位行时的提示（与历史页同名常量同值，守卫钉一致性） */
         const val TEXT_IMAGE_ROW_HINT = "请在「图片」分组里操作"
+
+    /** 分词：这条内容切不出任何可用的段（全是空白/标点） */
+    const val TEXT_SEGMENT_EMPTY = "这条没有可分的词"
 
         /** 收藏移出（「收藏图片时移到图库目录」）在面板上的提示：与历史页同一套措辞 */
         // 与历史页共用一处字面量（BUG.md L-1335）：原先这里少了「并从历史移除」，用户以为记录还在
