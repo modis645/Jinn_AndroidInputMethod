@@ -62,13 +62,13 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.jinn.inputmethod"
+        applicationId = "app.modis.phantom.inputmethod"
         // 26 起可只提供自适应图标，且 AudioRecord / VectorDrawable 行为稳定
         minSdk = 26
         targetSdk = 34
         // versionCode 取编译日期（yyyyMMdd，如 20260814），随每次编译递增，天然单调
         versionCode = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date()).toInt()
-        versionName = "jinn"
+        versionName = "phantom-1.0"
         resourceConfigurations += setOf("zh-rCN")
     }
 
