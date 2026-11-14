@@ -336,13 +336,13 @@ class SettingsActivity : ComponentActivity() {
         textUsage = findViewById(R.id.text_usage)
         textUsage.text = TEXT_USAGE
 
-        // 输入方案下拉（全局，2026-09-20 起）：全拼 + 八套双拼（共 9 项，语音键盘不在此列）。
-        // 选中即全局生效：选全拼 = 关闭双拼；选某套双拼 = 记住该方案并启用。
-        // 按键面板不再提供「全拼 / 双拼」切换按钮，这里是唯一的输入方案入口。
-        // 列表取自 [ShuangpinScheme.ALL]，与引擎共用同一份数据，不会脱节。
+        // 输入方案下拉（定制版）：只保留「26 键全拼」一项 —— 双拼不再支持（用户 2026-11-14 指定）。
+        // 列表仍走 [ShuangpinScheme.ALL] 过滤，保持与引擎同一份数据；简拼 / 混拼由全拼档的
+        // 前缀与残码前缀联想天然支持（如 nh → 你好、nih → 你 + h 前缀字），不需要单独方案。
+        val visibleSchemes = ShuangpinScheme.ALL.filter { !it.isShuangpin }
         spinnerShuangpin.adapter = ArrayAdapter(
             this, R.layout.item_spinner,
-            ShuangpinScheme.ALL.map { it.displayName },
+            visibleSchemes.map { it.displayName },
         ).also { it.setDropDownViewResource(R.layout.item_spinner_dropdown) }
         spinnerShuangpin.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
             override fun onItemSelected(
@@ -351,9 +351,8 @@ class SettingsActivity : ComponentActivity() {
                 // 与「默认键盘模式」同一个坑：初始化 setSelection 与恢复实例状态都会回调，
                 // 不挡住就会把用户已选的方案静默改掉（真机上实测被改写过）。
                 if (!spinnerShuangpin.userInteracted) return
-                val scheme = ShuangpinScheme.ALL.getOrNull(position) ?: return
+                val scheme = visibleSchemes.getOrNull(position) ?: return
                 prefs.useShuangpin = scheme.isShuangpin
-                // 双拼方案记忆：只在选双拼项时写（选全拼不清记忆，再选回双拼时回到上次那套）
                 if (scheme.isShuangpin) prefs.shuangpinScheme = scheme.prefsValue
                 Diagnostics.i(TAG, "输入方案: ${scheme.displayName}（双拼=${scheme.isShuangpin}）")
             }
@@ -597,10 +596,10 @@ class SettingsActivity : ComponentActivity() {
         switchUserLearning.isChecked = prefs.userLearning
         switchPredict.isChecked = prefs.predictEnabled
 
-        // 输入方案：按当前生效方案定位（全拼状态下选中「26 键全拼」，与全局语义一致）
-        spinnerShuangpin.setSelection(
-            ShuangpinScheme.ALL.indexOf(prefs.effectiveShuangpinScheme).coerceAtLeast(0)
-        )
+        // 输入方案：定制版只有「26 键全拼」一项，所以恒选第 0 项，并把历史遗留的双拼开关关掉
+        // （老用户升级上来 prefs 里可能还是某套双拼；不关掉会出现「下拉显示全拼、实际仍双拼」）
+        prefs.useShuangpin = false
+        spinnerShuangpin.setSelection(0)
         // 候选词行数：档位 1/2 对应下拉下标 0/1（Prefs 已归一，下标必然合法）
 
     }
@@ -1713,11 +1712,13 @@ class SettingsActivity : ComponentActivity() {
          * （语音改成松手即转文字），按用户授权改成现在的说法。文案仍走代码常量，
          * `values/strings.xml` 里那条 `settings_usage` 保持原样不动。
          */
-        const val TEXT_USAGE = "拼音键盘：26 键全拼 / 双拼（8 套方案），空格选词。\n" +
+        const val TEXT_USAGE = "拼音键盘：26 键全拼（简拼、混拼同一档直接支持），空格选词。\n" +
+            "打错了：点拼音条上的字母可定位光标，退格删该处前一个字母\n" +
             "长串拼音打错了：点候选栏右侧的 ✕ 可整串清掉\n" +
             "「删除键」双击再长按，清空整个输入框。\n" +
             "拼音键盘按下的字母，按回车直接输出英文。\n" +
             "长按空格键：按住说话，上滑取消，松手转文字\n" +
+            "长按字母键：上屏该键右上角的数字或符号\n" +
             "作者 https://github.com/yezijinn"
 
         /**
