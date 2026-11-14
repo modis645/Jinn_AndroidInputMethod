@@ -76,10 +76,11 @@
                 android:maxLines="3"/>
         </LinearLayout>
 
-        <!-- 检查更新：版本号取构建日期（yyyyMMdd）与远程 tag 比较；打开设置页时自动检查（7 天一次），
-             同行右侧为 Gitee 下载页入口 -->
+        <!-- 检查更新：**已隐藏**（定制版不走官方更新通道，避免远端包覆盖本地改动）。
+             控件 id 保留在原位，代码里 findViewById 仍能起，只是整行不显示。 -->
         <LinearLayout
-            style="@style/SettingsCardRow">
+            style="@style/SettingsCardRow"
+            android:visibility="gone">
 
             <Button
                 style="@style/SettingsButton"
