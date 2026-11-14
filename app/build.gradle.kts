@@ -154,6 +154,12 @@ dependencies {
     // 加载时流式解压、无需落地磁盘，实测解压约 0.6s 且发生在后台加载线程。
     implementation("org.tukaani:xz:1.9")
 
+    // 离线语音（sherpa-onnx）：AAR 里的 Kotlin API（classes.jar）与 arm64-v8a 的 .so 由 CI 落到
+    // app/libs/ 与 app/src/main/jniLibs/。用 files(...) 且**只在文件存在时**加依赖 —— 仓库里不存 28 MB
+    // 二进制，本地没有这包时照样能构建（只是没有离线语音能力）。
+    val sherpaJar = file("libs/sherpa-onnx.jar")
+    if (sherpaJar.exists()) implementation(files(sherpaJar))
+
     // ── 本地单元测试（src/test/，JVM，无需设备） ──
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
