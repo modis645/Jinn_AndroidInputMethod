@@ -76,7 +76,7 @@ internal object LocalAsrDownloader {
 
     /** 日志尾部若干行（卡片里直接显示用） */
     fun logTail(context: Context, lines: Int = 12): String {
-        val all = runCatching { logFile(context).readText() }.getOrDefault().trim()
+        val all = runCatching { logFile(context).readText() }.getOrDefault("").trim()
         if (all.isEmpty()) return ""
         val list = all.split('\n')
         return if (list.size <= lines) all else list.subList(list.size - lines, list.size).joinToString("\n")
