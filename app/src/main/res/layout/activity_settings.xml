@@ -282,43 +282,6 @@
                 android:minWidth="0dp" />
         </LinearLayout>
 
-        <!-- 拼音输入方案：本卡片只有一个下拉（`spinner_shuangpin`）。
-             ⚠ 不要写「键盘主题配色两个下拉」，也不要写「«定时»模式的两个切换时刻在同卡片下方」——
-             主题 / 皮肤是 `spinner_theme` / `skin_row_light` / `skin_row_dark`，定时两个时刻是
-             `row_theme_schedule` + `btn_theme_light_at` / `btn_theme_dark_at`，全部在
-             activity_key_appearance.xml（2026-10-09 由设置页迁走，见 KeyAppearanceActivity 类注释），
-             本卡片只剩方案这一个下拉。 -->
-        <LinearLayout
-            style="@style/SettingsCard">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical">
-
-                    <TextView
-                        style="@style/SettingsFieldTitle"
-                        android:text="@string/settings_shuangpin_scheme" />
-
-                    <com.jinn.inputmethod.UserAwareSpinner
-                        style="@style/SettingsField"
-                        android:id="@+id/spinner_shuangpin"
-                        android:layout_width="match_parent"
-                        android:layout_marginTop="2dp"
-                        android:spinnerMode="dropdown"/>
-
-                    <TextView
-                        style="@style/CardHint"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="2dp"
-                        android:paddingStart="4dp"
-                        android:paddingEnd="4dp"
-                        android:visibility="gone"
-                        android:text="@string/settings_shuangpin_scheme_desc"/>
-            </LinearLayout>
-
-        </LinearLayout>
 
         <!-- 用户词频学习 / 追加候选词语：两个开关并排（各带说明小字）
              （「加更多生僻字」2026-09-27 起改为入口按钮，与「增加模糊拼音」同行，页内是两档开关） -->
