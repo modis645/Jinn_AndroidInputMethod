@@ -3488,7 +3488,13 @@ class JinnIme : InputMethodService() {
         )
         recorder = MicRecorder(
             onChunk = { chunk -> asr?.sendChunk(chunk) },
-            onLevel = { level -> ui.post { micButton?.updateLevel(level) } },
+            onLevel = { level ->
+                        ui.post {
+                            micButton?.updateLevel(level)
+                            // 26 键的长语音键同样要吃电平：键内那条音量条就是「还在录」的唯一实证
+                            pinyinKeyboard?.updateVoiceLevel(level)
+                        }
+                    },
             onError = { message -> ui.post { onRecorderError(message) } },
             onSilence = { ui.post { onSilenceDetected() } },
         )
