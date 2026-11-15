@@ -68,9 +68,18 @@ internal object LocalAsrDownloader {
      */
     private fun downloadVad(context: Context, onProgress: (Int) -> Unit): Boolean {
         val tmp = File(context.cacheDir, "vad-download.onnx")
+        for (url in LocalAsrModel.VAD_URLS) {
+            val ok = downloadVadFrom(context, url, tmp, onProgress)
+            if (ok) return true
+        }
+        return false
+    }
+
+    /** 从单个地址拉 VAD；代理优先的顺序由 [LocalAsrModel.VAD_URLS] 决定 */
+    private fun downloadVadFrom(context: Context, url: String, tmp: File, onProgress: (Int) -> Unit): Boolean {
         var read = 0L
         return try {
-            val executing = http.newCall(Request.Builder().url(LocalAsrModel.VAD_URL).build())
+            val executing = http.newCall(Request.Builder().url(url).build())
             call = executing
             executing.execute().use { response ->
                 if (!response.isSuccessful) return false
