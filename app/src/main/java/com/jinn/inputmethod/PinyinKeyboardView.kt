@@ -2,6 +2,10 @@ package com.jinn.inputmethod
 
 import android.content.Context
 import android.content.res.ColorStateList
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.drawable.BitmapDrawable
 import android.graphics.Color
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
@@ -1206,7 +1210,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 拼音可编辑：点拼音条上的某个字母把光标落到那儿（见 bindPinyinCaret）
         bindPinyinCaret()
         // 长按拼音条 = 删掉末尾整个音节（点按只能一位一位删，改一整节拼音要点很多次）
-        viewCandidatePinyin.setOnLongClickListener { deleteLastSyllable() }
+        // 拼音条不再支持「长按删整个音节」：误触概率太高（想点候选却删掉了半个拼音串），
+        // 删音节改由分隔键与退格承担；拼音条长按保持无动作。
         btnClearCandidates = root.findViewById(R.id.btn_clear_candidates)
         // 清空候选：完全清掉拼音串 / 候选 / 预测，候选栏回到默认的 6 按钮功能面板。
         // （2026-09-20 起取代「长按退格整串清空拼音」的隐式手势；✕ 仅在候选/预测/拼音串
@@ -1244,6 +1249,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
         btnBackspace = root.findViewById(R.id.key_backspace)
         btnEnter = root.findViewById(R.id.key_enter)
         btnShift = root.findViewById(R.id.key_shift)
+        // 这枚键现在发的是音节分隔符，继续用原来的「↑ 箭头」会让人以为它还是大写 ——
+        // 图标改画成「分词」两个字（白色字形 + 既有的 imageTintList 着色，颜色跟其他功能键一致）
+        btnShift.setImageDrawable(buildTextIcon("分词"))
         btnComma = root.findViewById(R.id.key_comma)
         btnPeriod = root.findViewById(R.id.key_period)
         keySemicolon = root.findViewById(R.id.key_semicolon)
@@ -1740,36 +1748,29 @@ class PinyinKeyboardView @JvmOverloads constructor(
             refreshKeyLabels()
             Diagnostics.i(TAG, "中英切换: ${if (englishMode) "英文" else "中文"}")
         }
+        // 左上那枚键从「大写」改成「音节分隔」：单击插入分隔符，长按仍是大小写。
+        // 为什么要有显式按键：混拼（如 wokk = wo + kk）与连续简拼在没有分隔时切分归一，
+        // 用户看着出不来字却没有地方纠正 —— 双击拼音条 / 长按「，」两条手势太隐蔽，
+        // 常规入口必须是一枚键。
         btnShift.setOnClickListener {
-            // 符号层键面全是符号，没有大小写概念：大写键在此层无效
             if (layer == LAYER_SYMBOL) {
-                Diagnostics.i(TAG, "符号层: 大写键无操作")
+                Diagnostics.i(TAG, "符号层: 音节分隔键无操作")
                 return@setOnClickListener
             }
+            if (composing.isEmpty()) {
+                // 空串插分隔符没有意义（进引擎前会被剥掉），直接说清楚
+                Diagnostics.i(TAG, "音节分隔: 当前没有拼音")
+                return@setOnClickListener
+            }
+            // 光标在末尾（-1）时按「梢尾」处理：insertSeparator 只接受真实下标
+            val caret = if (pinyinCaret in 1 until composing.length) pinyinCaret else composing.length
+            insertSeparator(caret)
+        }
+        btnShift.setOnLongClickListener {
+            if (layer == LAYER_SYMBOL) return@setOnLongClickListener false
             KeyFeedback.fire(TapSound.G_FUNC)
-            if (prefs.capsOneShot) {
-                // 大写只生效一次：再点一次全关；每次开启都从「一次性」起步（上屏一个大写即回落）
-                if (capsMode) {
-                    capsMode = false
-                    capsOneShotActive = false
-                } else {
-                    capsMode = true
-                    capsOneShotActive = true
-                }
-            } else {
-                capsMode = !capsMode
-                capsOneShotActive = false
-            }
-            // 大写锁定切换的是「字母直通」模式，与切中英文同理：
-            // 不清残留拼音的话，切回小写后按退格会先删这些看不见的拼音，
-            // 而用户想删的是刚打出来的大写字母。
-            if (composing.isNotEmpty() || lastPredictions.isNotEmpty()) {
-                composing.clear()
-                lastPredictions = emptyList()
-                refreshCandidateBar()
-            }
-            refreshKeyLabels()
-            Diagnostics.i(TAG, "大写锁定: $capsMode")
+            toggleCapsByLongPress()
+            true
         }
         btnSpace.setOnClickListener {
             KeyFeedback.fire(TapSound.G_CONFIRM)
@@ -2419,6 +2420,28 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 图标改用由强调色亮度推出的对比色 —— 否则浅色 accent 上的近白图标几乎看不见
      * （2026-09-23 审查实测：钛金约 1.5:1、极光约 2.3:1）。
      */
+    /**
+     * 用一段文字画成图标（给改语义的功能键用）。
+     *
+     * 为什么不用资源矢量图：这里只需要两三个汉字，画一张位图比新增一套 drawable 简单，
+     * 也不会因为字形与字号跟键盘其它功能键不一致而显得突兀。字形画成**纯白**，
+     * 交给既有 `imageTintList` 着色（与「符号 / 删除」等键同一条着色路径）。
+     */
+    private fun buildTextIcon(text: String, sp: Float = 13f): Drawable {
+        val px = (sp * resources.displayMetrics.scaledDensity).coerceAtLeast(1f)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = px
+            color = Color.WHITE
+            textAlign = Paint.Align.CENTER
+        }
+        val width = paint.measureText(text).toInt().coerceAtLeast(1)
+        val metrics = paint.fontMetrics
+        val height = (metrics.bottom - metrics.top).toInt().coerceAtLeast(1)
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        Canvas(bitmap).drawText(text, width / 2f, -metrics.top, paint)
+        return BitmapDrawable(resources, bitmap)
+    }
+
     private fun refreshShiftTint() {
         val tint = if (capsMode) {
             KeyboardSkins.accentOnColor(skinToken(skin.accent, R.color.accent))
@@ -3177,6 +3200,36 @@ class PinyinKeyboardView @JvmOverloads constructor(
         refreshCandidateBar()
     }
 
+    /**
+     * 长按音节分隔键 = 大写切换（一次性 / 锁定按设置项 Prefs.capsOneShot 决定）。
+     *
+     * 大写是英文输入离不开的能力，所以不删只挪：分隔键单击负责中文纠错，长按负责大小写。
+     */
+    private fun toggleCapsByLongPress() {
+        if (prefs.capsOneShot) {
+            if (capsMode) {
+                capsMode = false
+                capsOneShotActive = false
+            } else {
+                capsMode = true
+                capsOneShotActive = true
+            }
+        } else {
+            capsMode = !capsMode
+            capsOneShotActive = false
+        }
+        // 与原先的单击一致：切大写等于切「字母直通」，残留拼音要先清掉，
+        // 否则退格先删的是看不见的拼音，用户想删的是刚打出来的大写字母。
+        if (composing.isNotEmpty() || lastPredictions.isNotEmpty()) {
+            composing.clear()
+            lastPredictions = emptyList()
+            refreshCandidateBar()
+        }
+        refreshKeyLabels()
+        Diagnostics.i(TAG, "大写锁定: $capsMode")
+    }
+
+
     /** 显示串里算作「拼音字母」的字符：音节分隔符与光标标记都不计数 */
     private fun isPinyinLetterChar(ch: Char): Boolean = ch in 'a'..'z' || ch in 'A'..'Z'
 
@@ -3231,30 +3284,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
     }
 
-    /**
-     * 长按拼音条：删掉末尾**整个音节**。
-     *
-     * 边界不自己写最大匹配 —— 引擎的 [PinyinEngine.markSyllables] 已按真实音节切开并在切不开时
-     * 原样返回，末尾最后一段的字母数就是该删的长度；整串只有一个音节时就是全删。
-     *
-     * 两种情况不动：① 双拼（按键与音节不是一对一，2 键=1 音节要另算，本版已不提供双拼）；
-     * ② 光标已被用户点到中间（他正在改那一段，此时删末尾会删掉他没在看的地方）。
-     *
-     * @return 是否消费了这次长按
-     */
-    private fun deleteLastSyllable(): Boolean {
-        if (shuangpinMode || composing.isEmpty() || layer != LAYER_LETTER) return false
-        if (pinyinCaret >= 0 && pinyinCaret != composing.length) return false
-        val full = composing.toString()
-        val tail = PinyinEngine.markSyllables(full).substringAfterLast('\'')
-        val count = (if (tail.isEmpty()) full.length else tail.length).coerceIn(1, composing.length)
-        composing.delete(composing.length - count, composing.length)
-        pinyinCaret = -1
-        KeyFeedback.fire(TapSound.G_ERASE, force = true)
-        Diagnostics.i(TAG, "拼音条长按: 删除末音节 \"$tail\"（剩 ${composing.length} 位）")
-        refreshCandidateBar()
-        return true
-    }
 
     /** 删除一个字符（有拼音串删拼音，否则删已上屏） */
     private fun deleteOne() {
