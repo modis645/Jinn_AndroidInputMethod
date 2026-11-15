@@ -5,6 +5,7 @@ import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
 import android.widget.BaseAdapter
+import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.ScrollView
@@ -1100,6 +1101,22 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         segmentList.addView(header, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(32),
         ))
+        // 横向排列（2026-11-15 改）：短语行的片段横着铺、可横向滚动，选中仍然是多选。
+        // 竖向列表一屏只放得下七八段，横向一条行能同时看到十几段，挑「哪几块要粘」更省眼。
+        val chipRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(dp(2), dp(2), dp(2), dp(2))
+        }
+        val chipScroll = HorizontalScrollView(context).apply {
+            isHorizontalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            addView(chipRow, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(36),
+            ))
+        }
+        segmentList.addView(chipScroll, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(40),
+        ))
         for ((index, segment) in segments.withIndex()) {
             val row = tabButton(segment, TapSound.G_TEXT) {
                 if (!selected.add(index)) selected.remove(index)
@@ -1111,10 +1128,12 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
                 )
                 refreshHeader()
             }
+            // 横向 chip：宽度随文字，左右各留 6dp 内边距，相邻之间 4dp
+            row.setPadding(dp(10), 0, dp(10), 0)
             rows += row
-            segmentList.addView(row, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(36),
-            ))
+            chipRow.addView(row, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(32),
+            ).apply { marginEnd = dp(4) })
         }
         segmentGridWasVisible = imageGrid.visibility == View.VISIBLE
         imageGrid.visibility = View.GONE
