@@ -187,30 +187,21 @@
                 android:minWidth="0dp" />
         </LinearLayout>
 
-        <!-- 敲击音效反馈 / 剪贴板自定义：两按钮并排 → 各自的独立全屏页 -->
+        <!-- 剪贴板自定义：独占一行的独立全屏页（2026-11-16 起「敲击音效反馈」入口已删） -->
         <LinearLayout
             style="@style/SettingsCardRow">
 
             <Button
                 style="@style/SettingsButton"
-                android:id="@+id/btn_tap_sound"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:minWidth="0dp" />
-
-            <Button
-                style="@style/SettingsButton"
                 android:id="@+id/btn_clipboard_customize"
                 android:layout_width="0dp"
-                android:layout_marginStart="8dp"
                 android:layout_weight="1"
                 android:minWidth="0dp" />
         </LinearLayout>
 
         <!-- 图库快贴：目录绑定 / 清除绑定 / 自动返回 / 缩略图布局都收在子页面里。
-             右侧同行放「空格左右按钮」入口按钮（点击进入「底栏标点输出」独立页）。
-             ⚠ 必须包在 SettingsCardRow 里 —— 卡片的圆角底板与边距都由它提供，
-             裸放一个 match_parent 的按钮会与上下邻居长得不一样（L-1029） -->
+             2026-11-16 起同行右侧的「空格左右按钮」入口已删；卡片行容器仍保留（圆角底板与
+             边距都由 SettingsCardRow 提供，裸放 button 会与上下邻居长得不一样）。 -->
         <LinearLayout
             style="@style/SettingsCardRow"
             android:baselineAligned="false">
@@ -219,14 +210,6 @@
                 style="@style/SettingsButton"
                 android:id="@+id/btn_gallery_settings"
                 android:layout_width="0dp"
-                android:layout_weight="1"
-                android:minWidth="0dp" />
-
-            <Button
-                style="@style/SettingsButton"
-                android:id="@+id/btn_space_cursor"
-                android:layout_width="0dp"
-                android:layout_marginStart="8dp"
                 android:layout_weight="1"
                 android:minWidth="0dp" />
         </LinearLayout>
