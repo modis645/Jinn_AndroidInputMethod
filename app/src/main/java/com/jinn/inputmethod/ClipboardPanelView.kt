@@ -1055,11 +1055,13 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     }
 
     /**
-     * 长按操作条的「分词」：把当前这条内容切成段，盖在列表区上逐段列出。
+     * 长按操作条的「分词」：把当前这条内容切成**短语级**片段，盖在列表区上逐段列出，
+     * 支持多选后一次粘贴（2026-11-15 改：原版逐词切太碎、且点一段就立刻粘走，无法组合）。
      *
-     * 只做一件事 —— 让用户从一条长内容里挑一截粘进去（网址、手机号、某个词）。
-     * 分类、分组、收藏、加密一行不动：分词结果取自 [ClipboardDb.Item.content]，
-     * 与「点条目整条粘」用的是同一份原文，所以两边看到的字符必然一致。
+     * 交互（与沙鸥拼音的分词口径对齐）：
+     *  - 点一段 = 选中/取消（选中行前加「✓」并换成强调色），可连点多段；
+     *  - 首行是状态 + 出口：已选 N 段时点它 = 粘贴；未选时点它 = 退出分词；
+     *  - 粘贴成功后收起面板，与原条目点击同一语义（失败保持面板，提示由 IME 出）。
      */
     private fun openSegmentsAction() {
         val item = longPressItem ?: return
@@ -1073,14 +1075,43 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         hideConfirmBar()
         actionToken++
         segmentList.removeAllViews()
-        // 首行给一句去向说明 + 点击即「取消」：IME 面板里没有返回键，用户得有个出口
-        val header = tabButton("分词（点一段即粘贴）", TapSound.G_FUNC) { closeSegments() }
+        segmentScroll.scrollTo(0, 0)
+        // 选中集合按**下标**记：同一段文本可能出现两次（如两行都写「知道了」），
+        // 按文本去重会让用户点一处、另一处也跟着亮
+        val selected = LinkedHashSet<Int>()
+        val rows = ArrayList<TextView>(segments.size)
+        val header = tabButton("", TapSound.G_FUNC) {
+            if (selected.isEmpty()) {
+                closeSegments()
+            } else {
+                val picked = selected.sorted().map { segments[it] }
+                pasteSegment(ClipboardSegments.join(picked))
+            }
+        }
         header.setTextColor(skinColor(context, skin.functionGlyph, R.color.text_secondary))
+        fun refreshHeader() {
+            header.text = if (selected.isEmpty()) {
+                "分词：点一段选中，可多选；点这里退出"
+            } else {
+                "分词：已选 ${selected.size} 段，点这里粘贴"
+            }
+        }
+        refreshHeader()
         segmentList.addView(header, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(32),
         ))
-        for (segment in segments) {
-            val row = tabButton(segment, TapSound.G_TEXT) { pasteSegment(segment) }
+        for ((index, segment) in segments.withIndex()) {
+            val row = tabButton(segment, TapSound.G_TEXT) {
+                if (!selected.add(index)) selected.remove(index)
+                val on = selected.contains(index)
+                rows[index].text = if (on) "✓ $segment" else segment
+                rows[index].setTextColor(
+                    if (on) skinColor(context, skin.accent, R.color.accent)
+                    else skinColor(context, skin.functionGlyph, R.color.text_primary)
+                )
+                refreshHeader()
+            }
+            rows += row
             segmentList.addView(row, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(36),
             ))
@@ -1090,11 +1121,10 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         listView.visibility = View.GONE
         textEmpty.visibility = View.GONE
         segmentScroll.visibility = View.VISIBLE
-        segmentScroll.scrollTo(0, 0)
         Diagnostics.i(TAG, "[$currentTraceId] 分词: id=${item.id} 段数=${segments.size}")
     }
 
-    /** 点中一段：与原条目点击同一语义（提交成功就收起面板；失败保持面板，提示由 IME 出） */
+    /** 粘贴（单段时是多选里的那一段）：提交成功后收起面板 */
     private fun pasteSegment(segment: String) {
         if (isPasting) return
         isPasting = true
@@ -1107,7 +1137,6 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         }
     }
 
-    /** 收起分词面板，把列表/网格按打开前的可见性还原 */
     private fun closeSegments() {
         if (segmentScroll.visibility != View.VISIBLE) return
         segmentScroll.visibility = View.GONE
