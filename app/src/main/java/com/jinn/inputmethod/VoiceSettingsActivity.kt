@@ -860,9 +860,9 @@ class VoiceSettingsActivity : ComponentActivity() {
     /**
      * 本地导入选择器（2026-11-15）：一次可选多个文件。
      *
-     * 为什么要这条路径：模型在 GitHub 发行页上，部分网络直连 / 加速镜像都拉不动（用户实测
-     * 「手动下载无效」）。用户在电脑上下好、拷进手机再从本机导入，是唯一不受网络影响的通路。
-     * 认文件名：`tokens*` → tokens.txt；`*vad*` → silero_vad.onnx；其余 `.onnx` → model.int8.onnx。
+     * 为什么要这条路径：模型放在 GitHub 发行页，部分网络直连和加速镜像都拉不动（用户实测
+     * 「手动下载无效」）。在电脑上下好、拷进手机再导入，是唯一不受手机网络影响的通路。
+     * 按文件名归位：含 token → tokens.txt；含 vad → silero_vad.onnx；其余 .onnx → model.int8.onnx。
      */
     private val importLauncher = registerForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments(),
@@ -874,8 +874,7 @@ class VoiceSettingsActivity : ComponentActivity() {
             var saved = 0
             var failed = 0
             for (uri in uris) {
-                val ok = runCatching { copyModelFile(uri) }.getOrDefault(false)
-                if (ok) saved++ else failed++
+                if (runCatching { copyModelFile(uri) }.getOrDefault(false)) saved++ else failed++
             }
             runOnUiThread {
                 if (isFinishing || isDestroyed) return@runOnUiThread
@@ -884,14 +883,14 @@ class VoiceSettingsActivity : ComponentActivity() {
                 textLocalAsrStatus.text = if (ready) {
                     "已导入 $saved 个文件，模型已就绪（占用 ${LocalAsrModel.usedBytes(this) / (1024 * 1024)} MB）"
                 } else {
-                    "已导入 $saved 个文件，还缺必需文件：model.int8.onnx 与 tokens.txt 两个都要有" +
-                        if (failed > 0) "（$failed 个文件读不了）" else ""
+                    "已导入 $saved 个文件，还缺必需文件（model.int8.onnx 与 tokens.txt 两个都要有）" +
+                        if (failed > 0) "，$failed 个文件读不了" else ""
                 }
             }
         }.start()
     }
 
-    /** 把一个 SAF 文件按文件名归位到 `filesDir/local-asr/` */
+    /** 把一个 SAF 文件按文件名归位到 filesDir/local-asr/ */
     private fun copyModelFile(uri: Uri): Boolean {
         val raw = uri.lastPathSegment?.substringAfterLast('/')?.lowercase() ?: ""
         val target = when {
@@ -900,8 +899,7 @@ class VoiceSettingsActivity : ComponentActivity() {
             raw.endsWith(".onnx") -> LocalAsrModel.MODEL_FILE
             else -> return false
         }
-        val dir = LocalAsrModel.dir(this)
-        val file = java.io.File(dir, target)
+        val file = java.io.File(LocalAsrModel.dir(this), target)
         contentResolver.openInputStream(uri)?.use { input ->
             file.outputStream().use { out -> input.copyTo(out) }
         } ?: return false
@@ -2011,8 +2009,114 @@ class VoiceSettingsActivity : ComponentActivity() {
          * 保存只对总开关 / 后端 / 地址 / 端口 / 凭据 / 语言 / 提示词有意义。文案与行为必须一致。
          */
         const val TEXT_DESC = "语音识别只在本机跑（sherpa-onnx + SenseVoice 整句模型），" +
-        "不连接任何服务器，也不需要任何 API Key。\n第一次使用要先下载模型（约 170 MB），" +
-        "下载失败时可以点「从本地导入」，把电脑上下好的文件拷进来。"
+            "不连接任何服务器，也不需要任何 API Key。" +
+            "第一次使用先下载模型（约 170 MB）；下载不通时可以点「从本地导入」，" +
+            "把电脑上下好的 model.int8.onnx 与 tokens.txt 拷进来。勾选项与默认键盘样式改动即保存。"
+
+        /** 识别后端选择（八张配置卡跟着切） */
+        const val TEXT_BACKEND_LABEL = "识别服务"
+        const val TEXT_BACKEND_CAPS = "自建服务端（CapsWriter）"
+        const val TEXT_BACKEND_XF = "讯飞在线（星火听写 V2）"
+        const val TEXT_BACKEND_OAI = "OpenAI 兼容（语音转写）"
+        const val TEXT_BACKEND_ALI = "阿里云百炼（Paraformer）"
+        const val TEXT_BACKEND_TENCENT = "腾讯云（一句话识别）"
+        const val TEXT_BACKEND_AZURE = "Azure（短音频识别）"
+        const val TEXT_BACKEND_BAIDU = "百度智能云（短语音识别）"
+        const val TEXT_BACKEND_DEEPGRAM = "Deepgram（Pre-recorded）"
+        const val TEXT_BACKEND_LOCAL = "本机离线（SenseVoice 快速整句）"
+
+        /** 本机离线识别：模型不随包，按需下载 */
+        const val TEXT_LOCAL_ASR_DESC = "本机离线识别：不联网、不需要任何 Key。" +
+            "首次使用要在本机下载 SenseVoice small（整句识别，约 163 MB 压缩包 / 落地 230 MB 级），" +
+            "松手后一次性解码，长句会有零点几秒到一两秒的滞后。"
+        const val TEXT_LOCAL_ASR_IMPORT = "从本地导入模型"
+        const val TEXT_LOCAL_ASR_DOWNLOAD = "下载模型"
+        const val TEXT_LOCAL_ASR_CANCEL = "取消下载"
+        const val TEXT_LOCAL_ASR_DELETE = "删除模型"
+
+        /** 百度短语音识别：API Key / Secret Key / dev_pid（标签走 hint，文案不进 strings.xml） */
+        const val TEXT_BAIDU_DESC = "百度智能云「短语音识别标准版」：填 API Key（AK）与 Secret Key（SK），" +
+            "dev_pid 默认 1537（普通话）。录音只在本机缓冲，松手后整段上传；单次不超过 60 秒。"
+        const val TEXT_BAIDU_API_KEY = "API Key（AK）"
+        const val TEXT_BAIDU_SECRET_KEY = "Secret Key（SK）"
+        const val TEXT_BAIDU_DEV_PID = "dev_pid（默认 1537 普通话）"
+        const val TEXT_BAIDU_REQUIRED = "必填"
+        const val TEXT_BAIDU_PID_REQUIRED = "dev_pid 必须是数字"
+        const val TEXT_BAIDU_SHOW = "显示 Secret Key"
+
+        /** Deepgram：API Key / 模型 / 语言（标签走 hint，文案不进 strings.xml） */
+        const val TEXT_DEEPGRAM_DESC = "Deepgram 的 Pre-recorded 识别：填 API Key，模型默认 nova-3、" +
+            "语言默认 zh。录音只在本机缓冲，松手后整段上传（裸 WAV）。"
+        const val TEXT_DEEPGRAM_API_KEY = "API Key"
+        const val TEXT_DEEPGRAM_MODEL = "模型（默认 nova-3）"
+        const val TEXT_DEEPGRAM_LANGUAGE = "语言（默认 zh）"
+        const val TEXT_DEEPGRAM_REQUIRED = "必填"
+        const val TEXT_DEEPGRAM_SHOW = "显示 API Key"
+
+        /** 腾讯云一句话识别：SecretId / SecretKey / 引擎型号（标签走 hint，文案不进 strings.xml） */
+        const val TEXT_TENCENT_DESC = "腾讯云「一句话识别」（SentenceRecognition）：填 SecretId 与 SecretKey，" +
+            "引擎型号默认 16k_zh。录音只在本机缓冲，松手后整段上传；单次不超过 60 秒。"
+        const val TEXT_TENCENT_SECRET_ID = "SecretId"
+        const val TEXT_TENCENT_SECRET_KEY = "SecretKey"
+        const val TEXT_TENCENT_ENGINE = "引擎型号（默认 16k_zh）"
+        const val TEXT_TENCENT_REQUIRED = "必填"
+        const val TEXT_TENCENT_SHOW = "显示 SecretKey"
+
+        /** Azure 短音频识别：Base URL / 订阅密钥 / 语言码（标签走 hint，文案不进 strings.xml） */
+        const val TEXT_AZURE_DESC = "Azure AI Speech 的短音频识别 REST：填资源的 Base URL" +
+            "（例 https://你的资源名.cognitiveservices.azure.com）与订阅密钥，语言默认 zh-CN。" +
+            "地址必须 https，局域网可用 http。"
+        const val TEXT_AZURE_BASE_URL = "Base URL（例 https://资源名.cognitiveservices.azure.com）"
+        const val TEXT_AZURE_KEY = "订阅密钥（Key 1 / Key 2）"
+        const val TEXT_AZURE_LANGUAGE = "语言（默认 zh-CN）"
+        const val TEXT_AZURE_REQUIRED = "必填"
+        const val TEXT_AZURE_SHOW = "显示订阅密钥"
+
+        /** 阿里云百炼：WS 地址 / 模型名 / API Key（标签走 hint，文案不进 strings.xml） */
+        const val TEXT_ALI_DESC = "阿里云百炼的实时语音识别（Paraformer / Qwen-ASR）：填 WS 地址、" +
+            "模型名与 API Key。地址必须 wss://（本机可用 ws://），默认端点在国内可直连。"
+        const val TEXT_ALI_WS_URL = "WS 地址（默认 wss://dashscope.aliyuncs.com/api-ws/v1/inference）"
+        const val TEXT_ALI_MODEL = "模型名（默认 paraformer-realtime-v2）"
+        const val TEXT_ALI_API_KEY = "API Key"
+        const val TEXT_ALI_REQUIRED = "必填"
+        const val TEXT_ALI_SHOW = "显示 API Key"
+
+        /** OpenAI 兼容：Base URL / 模型名 / API Key（标签走 hint，文案不进 strings.xml） */
+        const val TEXT_OAI_DESC = "任何提供 /audio/transcriptions 的 OpenAI 兼容服务（OpenAI 官方 / Groq / " +
+            "硅基流动 / Together 等）：填 Base URL、模型名与 API Key。地址必须 https，" +
+            "局域网可用 http。录音只在本机缓冲，松手后整段上传。"
+        const val TEXT_OAI_BASE = "Base URL（例 https://api.groq.com/openai/v1）"
+        const val TEXT_OAI_MODEL = "模型名（默认 whisper-1）"
+        const val TEXT_OAI_API_KEY = "API Key"
+        const val TEXT_OAI_REQUIRED = "必填"
+        const val TEXT_OAI_SHOW = "显示 API Key"
+
+        /** 讯飞在线：三件凭据（标签走 hint，文案不进 strings.xml） */
+        const val TEXT_XF_DESC = "讯飞开放平台的「语音听写大模型（中英）V2.0」凭据：" +
+            "APPID / APIKey / APISecret 只加密保存在本机，不会写进日志。"
+        const val TEXT_XF_APP_ID = "APPID"
+        const val TEXT_XF_API_KEY = "APIKey"
+        const val TEXT_XF_API_SECRET = "APISecret"
+        const val TEXT_XF_REQUIRED = "必填"
+
+        /**
+         * 磁盘上有密文、本机解不开时的如实说明。
+         *
+         * 少了它，用户只会看到几个空框 —— 与自己「明明填过」的记忆冲突，最坏会以为凭据被偷。
+         * 实际成因是加密密钥件（`filesDir/credential_soft.key`）丢失或密文损坏，重填即可恢复。
+         */
+        const val TEXT_XF_UNREADABLE =
+            "\n⚠ 已保存的凭据在本机解不开（加密密钥丢失或损坏），需要重新填写。"
+
+        /** 显示 / 隐藏两个密码框（对齐粘贴进来的长串凭据用；APPID 本来就明文） */
+        const val TEXT_XF_SHOW = "显示 APIKey / APISecret"
+
+        /** 后端下拉的取值与显示文案（一一对应，靠下标对应） */
+        val BACKEND_VALUES = arrayOf(
+            VoiceBackend.LOCAL,
+            VoiceBackend.CAPS, VoiceBackend.XF, VoiceBackend.OAI, VoiceBackend.ALI,
+            VoiceBackend.TENCENT, VoiceBackend.AZURE, VoiceBackend.BAIDU, VoiceBackend.DEEPGRAM,
+        )
         val BACKEND_LABELS = arrayOf(
             TEXT_BACKEND_LOCAL,
             TEXT_BACKEND_CAPS, TEXT_BACKEND_XF, TEXT_BACKEND_OAI, TEXT_BACKEND_ALI,
