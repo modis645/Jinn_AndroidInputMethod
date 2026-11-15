@@ -25,6 +25,20 @@ internal object LocalAsrModel {
     const val VAD_FILE = "silero_vad.onnx"
     const val VAD_URL =
         "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx"
+
+    /**
+     * 国内可达的下载地址清单（按顺序试，第一条通就用第一条）。
+     *
+     * 直连 github.com 在部分网络下完全不通（用户 2026-11-15 反馈「语音模型下载的地址连接不上」），
+     * 所以在官方地址后面挂几个公共加速前缀：同一个文件，只是换了出口。
+     */
+    private const val VAD_PATH = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx"
+    val VAD_URLS: List<String> = listOf(
+        VAD_URL,
+        "https://ghfast.top/$VAD_PATH",
+        "https://ghproxy.net/$VAD_PATH",
+        "https://hub.gitmirror.com/$VAD_PATH",
+    )
     const val MODEL_FILE = "model.int8.onnx"
     const val TOKENS_FILE = "tokens.txt"
 
@@ -33,6 +47,17 @@ internal object LocalAsrModel {
         "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/" +
             "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17.tar.bz2"
     const val ARCHIVE_NAME = "sense-voice-small.tar.bz2"
+
+    /** 模型压缩包的下载地址清单（同 [VAD_URLS]，官方地址 + 公共加速前缀） */
+    private const val ARCHIVE_PATH =
+        "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/" +
+            "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17.tar.bz2"
+    val ARCHIVE_URLS: List<String> = listOf(
+        ARCHIVE_URL,
+        "https://ghfast.top/$ARCHIVE_PATH",
+        "https://ghproxy.net/$ARCHIVE_PATH",
+        "https://hub.gitmirror.com/$ARCHIVE_PATH",
+    )
 
     fun dir(context: Context): File = File(context.filesDir, DIR_NAME).apply { mkdirs() }
 
