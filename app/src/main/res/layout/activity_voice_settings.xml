@@ -242,31 +242,6 @@
                     </LinearLayout>
                 </LinearLayout>
 
-                <!-- 识别选项：两个勾选框一行（勾选即落盘） -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="2dp"
-                    android:orientation="horizontal">
-
-                    <CheckBox
-                        android:id="@+id/check_strip"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="@string/settings_strip_punc"
-                        android:textColor="@color/text_primary"
-                        android:textSize="12sp" />
-
-                    <CheckBox
-                        android:id="@+id/check_composing"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="@string/settings_composing"
-                        android:textColor="@color/text_primary"
-                        android:textSize="12sp" />
-                </LinearLayout>
             </LinearLayout>
 
             <!-- 本机离线识别（sherpa-onnx + SenseVoice 快速整句）：模型不随包，按需下载。
