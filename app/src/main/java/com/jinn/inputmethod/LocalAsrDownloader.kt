@@ -101,9 +101,25 @@ internal object LocalAsrDownloader {
     fun sweepCache(context: Context) {
         if (isRunning()) return
         runCatching {
+            val unpack = File(context.cacheDir, "local-asr-unpack")
+            // 先救再删：解包目录里若已有完整的两件、而应用数据目录里没有，说明上次在
+            // 「换入」之前就被杀掉了 —— 把它搬进 filesDir 能省掉一次 163 MB 重下。
+            if (!LocalAsrModel.isReady(context)) {
+                val m = File(unpack, LocalAsrModel.MODEL_FILE)
+                val t = File(unpack, LocalAsrModel.TOKENS_FILE)
+                if (m.isFile && m.length() > 0L && t.isFile && t.length() > 0L) {
+                    val dir = LocalAsrModel.dir(context)
+                    dir.listFiles()?.forEach { it.delete() }
+                    if (m.renameTo(LocalAsrModel.modelFile(context)) &&
+                        t.renameTo(LocalAsrModel.tokensFile(context))
+                    ) {
+                        Diagnostics.i("LocalAsr", "从缓存抢救出完整模型，避免重下")
+                    }
+                }
+            }
             File(context.cacheDir, LocalAsrModel.ARCHIVE_NAME).delete()
             File(context.cacheDir, "vad-download.onnx").delete()
-            File(context.cacheDir, "local-asr-unpack").deleteRecursively()
+            unpack.deleteRecursively()
         }.onFailure { Diagnostics.w("LocalAsr", "临时件清理失败: ${it.javaClass.simpleName}") }
     }
 
