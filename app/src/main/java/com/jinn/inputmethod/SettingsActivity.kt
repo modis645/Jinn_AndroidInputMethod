@@ -1706,7 +1706,7 @@ class SettingsActivity : ComponentActivity() {
 
     /** 「启用」按钮的另两态（第一态直接用系统的 settings_enable_ime 文案） */
     const val TEXT_IME_ENABLED_NOT_CURRENT = "已启用，去切换"
-    const val TEXT_IME_READY = "幻影输入法已就绪"
+    const val TEXT_IME_READY = "幻影拼音已就绪"
 
     /** 「启用」返回后补弹切换面板的延时（给系统设置页收起与状态落盘留余量） */
     const val IME_SWITCH_DELAY_MS = 400L
