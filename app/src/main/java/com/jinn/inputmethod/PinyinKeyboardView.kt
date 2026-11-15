@@ -1765,6 +1765,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 Diagnostics.i(TAG, "符号层: 音节分隔键无操作")
                 return@setOnClickListener
             }
+            if (englishMode) {
+                // 英文态没有音节可分：这枚键按原义当大写用（单击切大小写，长按锁大写）
+                KeyFeedback.fire(TapSound.G_FUNC)
+                toggleCapsByLongPress()
+                return@setOnClickListener
+            }
             if (composing.isEmpty()) {
                 // 空串插分隔符没有意义（进引擎前会被剥掉），直接说清楚
                 Diagnostics.i(TAG, "音节分隔: 当前没有拼音")
