@@ -4928,9 +4928,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
             voiceHoldCancelArmed -> TEXT_VOICE_CANCEL_HINT
             else -> TEXT_VOICE_HOLD_HINT
         }
-        // 空格键话筒角标：只在语音真的能用时出现。`canVoice()` 已经是长按前的同一道门，
-        // 两处结论必须一致 —— 这里画了图标、长按却被拒，就是在教用户做无效动作。
-        val micRes = if (listener?.canVoice() == true) R.drawable.ic_space_mic else 0
+        // 空格键话筒角标：**无条件显示**。
+        //
+        // 原先按 `canVoice()` 显隐，结果用户报「空格键上根本没有麦克风图标」（2026-11-16）——
+        // 模型没就绪 / 语音总开关关着时角标就消失，而角标本来的作用是「告诉这里能长按说话」。
+        // 现在一律画上；语音不可用时长按仍按原逻辑交回短按，不会出现「画了图标却什么都不做」
+        // 的死路（那一点由 IME 出声提示）。
+        val micRes = R.drawable.ic_space_mic
         btnSpaceLabel?.setCompoundDrawablesWithIntrinsicBounds(0, 0, micRes, 0)
         // 英文键盘没有子 TextView，`key_space` 自己就是文本：同一枚角标挂它身上
         (btnSpace as? TextView)?.let {
