@@ -852,7 +852,15 @@ class VoiceSettingsActivity : ComponentActivity() {
                     }
                 }
             },
+            onStage = { stage ->
+                runOnUiThread {
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    textLocalAsrStatus.text = stage
+                    btnLocalAsrDownload.text = TEXT_LOCAL_ASR_CANCEL
+                }
+            },
         )
+        // download() 一进来就把任务标记成「在跑」，这里再刷一次，按钮立刻变「取消下载」
         refreshLocalAsrStatus(0)
     }
 
