@@ -45,7 +45,10 @@ import java.lang.ref.WeakReference
  *
  * 两种模式通过键盘上的「键盘 / 语音」键互相切换，互不干扰。
  */
-class JinnIme : InputMethodService() {
+class JinnIme : InputMethodService()
+
+    /** 崩溃采集只挂一次（服务会被系统重复创建） */
+    private var crashCaptureInstalled = false {
 
     private enum class Mode { NONE, HOLD, TOGGLE }
 
@@ -641,6 +644,29 @@ class JinnIme : InputMethodService() {
         }
     }
 
+    /**
+     * 崩溃栈采集（2026-11-15 用户报「无法调用 / 闪退」，本机无真机连 adb，只能靠用户把栈带出来）。
+     *
+     * 做两件事：写 filesDir/crash-last.txt；把前 1200 字复制到系统剪贴板 —— 进程死了剪贴板
+     * 还在，用户随便找个输入框粘一下就能发过来。只挂一次，且自身异常一律吞掉。
+     */
+    private fun installCrashCapture() {
+        if (crashCaptureInstalled) return
+        crashCaptureInstalled = true
+        val previous = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, error ->
+            runCatching {
+                val writer = java.io.StringWriter()
+                error.printStackTrace(java.io.PrintWriter(writer))
+                val text = "幻影拼音崩溃\n" + writer.toString().take(1200)
+                java.io.File(filesDir, "crash-last.txt").writeText(text)
+                val cm = getSystemService(android.content.ClipboardManager::class.java)
+                cm?.setPrimaryClip(android.content.ClipData.newPlainText("crash", text))
+            }
+            previous?.uncaughtException(thread, error)
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         Diagnostics.init(this)
@@ -687,6 +713,11 @@ class JinnIme : InputMethodService() {
                 )
             }.onFailure { Diagnostics.w(TAG, "离线语音: 自动下载启动失败 ${it.message}") }
         }.apply { name = "local-asr-autodl" }.start()
+        // 简拼首字母索引放到后台建（按键路径上建会把 UI 线程拖住，系统判成无响应就杀进程）
+        runCatching { PinyinEngine.preloadInitialsIndex() }
+            .onFailure { Diagnostics.w(TAG, "简拼索引预建失败: ${it.message}") }
+        // 崩溃兜底：把栈写进 filesDir/crash-last.txt 并复制到剪贴板，用户可以直接粘出来给我
+        installCrashCapture()
         // 敲击反馈引擎（音效 + 震动）：进程级单例，attach 幂等 —— 系统重建 IME 会再次 onCreate，
         // 重复挂载必须无害（否则会多出一份 SoundPool，旧的永不释放）
         KeyFeedback.attach(this)
