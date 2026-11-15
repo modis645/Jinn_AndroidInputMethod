@@ -2761,6 +2761,9 @@ object PinyinEngine {
      */
     fun predict(lastWord: String): List<String> {
         if (!loaded || lastWord.isEmpty()) return emptyList()
+        // 上屏后联想（用户 2026-11-15）：只对中文上屏联想。上屏的是英文 / 数字 / 标点时
+        // 既没有「下一个词」可言，也不该在纯英文输入里冒出中文候选。
+        if (lastWord.none { it in '\u4e00'..'\u9fff' }) return emptyList()
         // 两套语义要分清（见 rememberChoice / displayTake）：`candidatePinyin` 登记的是**显示词**
         // （繁体模式下即繁体），而词库与 `wordToPinyin` 一律是简体 —— 查词库侧前先折回简体。
         val simpLast = toSimplified(lastWord)
