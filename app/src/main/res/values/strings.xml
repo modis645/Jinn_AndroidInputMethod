@@ -132,7 +132,7 @@
     <string name="switch_auto_show_keyboard_desc">关闭后不再弹出键盘</string>
 
     <!-- 设置页 · 语音授权与诊断导出 -->
-    <string name="settings_voice_input">语音输入转文字,要自建服务器</string>
+    <string name="settings_voice_input">离线语音（本机识别，不联网）</string>
     <string name="settings_voice_input_desc">关闭时语音完全停用（不占用内存、长按空格无效）</string>
     <string name="settings_grant_mic">授权麦克风</string>
     <string name="settings_mic_granted">麦克风已授权</string>
