@@ -2297,6 +2297,65 @@ object PinyinEngine {
     //   3) 命中的词用 DP 逐音节对齐验证：单字母段只校验首字母，音节段要求整段相等。
     // 纯简拼（全段单字母）与任意位置混拼走同一条路径，不再有漏词死角。
 
+    /**
+     * 字符 → 可能读音（多音字有多个）。简拼校验用：必须按**词里每个字的真实读音**判断，
+     * 不能只看词条键这串字母（键丢了音节边界）。
+     *
+     * 为什么非要有它：`yangou` 这串字母既能读成 yan+gou（烟垢），也能读成 yang+ou。
+     * 只按字母做 DP，会把 `you`（y + ou）对齐到 yang+ou，于是「烟垢 / 颜狗 / 檐沟」这种
+     * 与输入毫无关系的词被算作合法简拼（用户 2026-11-16 抓到）。按真实读音校验后，
+     * 烟垢的第二个字只能是 gou，`ou` 就对齐不上，自然出局；而「亚欧」(ya+ou)、
+     * 「有偶」(you+ou) 这类真正读得通的仍然保留。
+     */
+    @Volatile
+    private var charToSyllables: HashMap<Char, List<String>>? = null
+
+    /** 懒建 char → 读音表（首次简拼校验时建一次，只读；规模约两万字级） */
+    private fun syllablesOfChar(c: Char): List<String> {
+        charToSyllables?.let { return it[c].orEmpty() }
+        val built = synchronized(this) {
+            charToSyllables ?: run {
+                val m = HashMap<Char, MutableList<String>>(32_768)
+                for ((syl, chars) in charsBySyllable) {
+                    for (ch in chars) {
+                        if (ch.isEmpty()) continue
+                        m.getOrPut(ch[0]) { ArrayList(2) }.add(syl)
+                    }
+                }
+                val frozen = HashMap<Char, List<String>>(m.size)
+                for ((k, v) in m) frozen[k] = v
+                charToSyllables = frozen
+                frozen
+            }
+        }
+        return built[c].orEmpty()
+    }
+
+    /**
+     * 用**词的真实读音**校验简拼 / 混拼对齐：第 i 段对第 i 个字。
+     *
+     *  - 单字母段 ⇒ 该字的某个读音以这个字母开头（即声母对得上）；
+     *  - 完整音节段 ⇒ 该字的某个读音整段相等。
+     *
+     * 字数与段数不等（例如三段输入却命中两字词）直接判不合法 —— 简拼的段就是音节，
+     * 音节数必须等于字数。
+     */
+    private fun matchesByReading(word: String, segs: List<String>): Boolean {
+        if (word.length != segs.size) return false
+        for (i in segs.indices) {
+            val syls = syllablesOfChar(word[i])
+            if (syls.isEmpty()) return false
+            val seg = segs[i]
+            val ok = if (seg.length == 1) {
+                syls.any { it[0] == seg[0] }
+            } else {
+                syls.any { it == seg }
+            }
+            if (!ok) return false
+        }
+        return true
+    }
+
     /** 简拼首字母索引：`词的首字母串 to 词库键`，按首字母串排序（配合二分做前缀查找） */
     private var initialsIndex: Array<Pair<String, String>>? = null
 
@@ -2478,14 +2537,19 @@ object PinyinEngine {
         val seen = HashSet<String>(ABBREV_MAX_WORDS * 2)
 
         // 一个命中的键 → 词；按用户词频重排后截前 MAX_PHRASES（与精确词同口径）
-        fun collect(key: String, syllables: Int) {
+        fun collect(key: String, segs: List<String>) {
             if (out.size >= ABBREV_MAX_WORDS) return
             val found = phrasesFor(key) ?: return
             val ranked = UserFrequency.rank(found) { toSimplified(it) }
             for (w in displayTake(ranked.asList(), MAX_PHRASES)) {
                 if (out.size >= ABBREV_MAX_WORDS) return
                 if (!seen.add(w)) continue
-                out.add(w to syllables)
+                // 词条键只是字母串，音节的真实归属要看每个字自己的读音
+                if (!matchesByReading(w, segs)) {
+                    Diagnostics.v(TAG, "简拼剔除非读音对齐的词: $w <- ${segs.joinToString("'")}")
+                    continue
+                }
+                out.add(w to segs.size)
             }
         }
 
@@ -2500,7 +2564,7 @@ object PinyinEngine {
                 if (!initials.startsWith(projection)) break
                 if (scanned >= ABBREV_MATCH_SCAN_CAP || out.size >= ABBREV_MAX_WORDS) break
                 scanned++
-                if (matchesSegments(key, segs)) collect(key, segs.size)
+                if (matchesSegments(key, segs)) collect(key, segs)
                 i++
             }
         }
