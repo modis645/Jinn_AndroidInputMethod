@@ -53,6 +53,24 @@ internal object LocalAsrDownloader {
 
     fun isRunning(): Boolean = running
 
+    /** 最近一次失败原因（设置页在「未就绪」态下常态展示，不再一闪而过） */
+    @Volatile
+    var lastFailure: String? = null
+        private set
+
+    /** 下载日志文件：每次下载前清空，逐条追加（用户可一键复制发给开发者） */
+    private fun logFile(context: Context): File = File(context.filesDir, "local-asr-download.log")
+
+    fun log(context: Context, message: String) {
+        val stamp = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US)
+            .format(java.util.Date())
+        runCatching { logFile(context).appendText("$stamp $message\n") }
+        Diagnostics.i("LocalAsr", message)
+    }
+
+    fun logText(context: Context): String =
+        runCatching { logFile(context).readText() }.getOrDefault("").ifBlank { "（暂无日志）" }
+
     /** 取消在途任务（幂等） */
     fun cancel() {
         cancelled = true
@@ -139,6 +157,9 @@ internal object LocalAsrDownloader {
         }
         cancelled = false
         running = true
+        lastFailure = null
+        runCatching { logFile(context).writeText("") }
+        log(context, "开始下载（源数 ${LocalAsrModel.ARCHIVE_URLS.size}，期望 ${LocalAsrModel.ARCHIVE_SIZE} 字节）")
         Thread({
             val archive = File(context.cacheDir, LocalAsrModel.ARCHIVE_NAME)
             val tmpDir = File(context.cacheDir, "local-asr-unpack")
@@ -154,6 +175,7 @@ internal object LocalAsrDownloader {
                 val urls = LocalAsrModel.ARCHIVE_URLS
                 for ((index, url) in urls.withIndex()) {
                     runCatching { onStage?.invoke("正在连接第 ${index + 1}/${urls.size} 个下载源…") }
+                    log(context, "源 ${index + 1}/${urls.size}: $url")
                     if (cancelled) {
                         reason = "已取消"
                         break
@@ -166,6 +188,11 @@ internal object LocalAsrDownloader {
                     var got = 0L
                     try {
                         executing.execute().use { response ->
+                            log(
+                                context,
+                                "  HTTP ${response.code} type=${response.header("Content-Type")} " +
+                                    "len=${response.header("Content-Length")}",
+                            )
                             if (!response.isSuccessful) {
                                 lastError = "HTTP ${response.code}"
                                 return@use
@@ -203,6 +230,7 @@ internal object LocalAsrDownloader {
                         }
                     } catch (e: Exception) {
                         lastError = e.message ?: "连接失败"
+                        log(context, "  异常 ${e.javaClass.simpleName}: ${e.message}")
                     } finally {
                         call = null
                     }
@@ -211,13 +239,17 @@ internal object LocalAsrDownloader {
                             runCatching { stage("正在校验第 ${index + 1}/${urls.size} 个源的文件…") }
                         }
                         val size = archive.length()
+                        log(context, "  收到 $size 字节")
                         if (size < LocalAsrModel.ARCHIVE_MIN_BYTES) {
                             lastError = "源返回的字节数不对（$size 字节）"
+                            log(context, "  判定：字节不足，换下一个源")
                         } else if (LocalAsrModel.verifyArchive(archive)) {
                             lastError = null
+                            log(context, "  判定：校验通过，开始解包")
                             break
                         } else {
                             lastError = "模型文件校验不通过"
+                            log(context, "  判定：sha256 不符，换下一个源")
                         }
                         archive.delete()
                         onProgress(0)
@@ -296,6 +328,8 @@ internal object LocalAsrDownloader {
                 archive.delete()
                 tmpDir.deleteRecursively()
             }
+            if (!ok) lastFailure = reason
+            log(context, "结束 ok=$ok reason=${reason ?: "-"}")
             onProgress(if (ok) 100 else 0)
             Diagnostics.i(
                 "LocalAsr",
