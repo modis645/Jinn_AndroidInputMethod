@@ -401,17 +401,6 @@
                     android:textColor="@color/text_primary"
                     android:textSize="14sp"
                     android:saveEnabled="false" />
-
-                <Switch
-                    android:id="@+id/switch_key_hint"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:layout_weight="1"
-                    android:minHeight="40dp"
-                    android:textColor="@color/text_primary"
-                    android:textSize="14sp"
-                    android:saveEnabled="false" />
             </LinearLayout>
 
             <LinearLayout
@@ -420,16 +409,6 @@
                 android:layout_marginTop="6dp"
                 android:baselineAligned="false"
                 android:orientation="horizontal">
-
-                <Switch
-                    android:id="@+id/switch_pinyin_quanpin"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:minHeight="40dp"
-                    android:textColor="@color/text_primary"
-                    android:textSize="14sp"
-                    android:saveEnabled="false" />
 
                 <!-- 第二列：小写长按变大 —— 与「双拼候选全音」同占一行两列；2026-10-21 与数字行对调后
                      从「大写键不锁定」那一行挪上来，数字行换到下一行右列（`switch_number_row`）。
