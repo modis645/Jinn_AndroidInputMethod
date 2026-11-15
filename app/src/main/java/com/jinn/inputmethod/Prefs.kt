@@ -295,11 +295,12 @@ class Prefs(private val appContext: Context) {
     /**
      * 选择台账（用户词库原料）：把 26 键上屏的候选按「词 + 读音」只追加记录。
      *
-     * **默认关**：属于会长期留痕的隐私数据，必须用户在说明弹框里手输大写 OK 才开启；
-     * 关闭时连同 `user_picks.txt` 一起删除（见 [SelectionLedger.deleteFile]）。
+     * **默认开**（用户 2026-11-15：「默认开启用户词库」）：词库只有记了你实际选的词才会越用越准，
+     * 默认关等于装完就是个哑巴输入法。仍然可以关闭，关闭时连同 `user_picks.txt` 一起删除
+     * （见 [SelectionLedger.deleteFile]）。
      */
     var userDictEnabled: Boolean
-        get() = boolOr(KEY_USER_DICT_ENABLED, false)
+        get() = boolOr(KEY_USER_DICT_ENABLED, true)
         set(value) = sp.edit { putBoolean(KEY_USER_DICT_ENABLED, value) }
 
     /**
