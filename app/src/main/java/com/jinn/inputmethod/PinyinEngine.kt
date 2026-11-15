@@ -1956,13 +1956,11 @@ object PinyinEngine {
         }
     }
 
-    private companion object {
-        /** 同一串拼音连续选中同一词多少次才收录（主流输入法口径） */
-        const val ADMIT_STREAK_PICKS = 3
+    /** 同一串拼音连续选中同一词多少次才收录（主流输入法口径） */
+    private const val ADMIT_STREAK_PICKS = 3
 
-        /** 同一个词累计被选中多少次才收录（不看是否连续、不看用哪种拼法） */
-        const val ADMIT_TOTAL_PICKS = 6
-    }
+    /** 同一个词累计被选中多少次才收录（不看是否连续、不看用哪种拼法） */
+    private const val ADMIT_TOTAL_PICKS = 6
 
     private fun addUserWord(word: String, pinyin: String): Boolean {
         if (word.isEmpty() || pinyin.isEmpty()) return false
