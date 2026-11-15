@@ -67,9 +67,6 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var switchPredict: Switch
 
     /** 在线翻译（BYOK）：总开关 + 入口按钮 + 状态摘要（文案全部代码下发） */
-    private lateinit var switchTranslate: Switch
-    private lateinit var btnTranslateSettings: Button
-    private lateinit var textTranslateState: TextView
 
     /** 模糊音容错 / 加更多生僻字入口按钮（文案在代码里下发：strings.xml 默认不改动） */
     private lateinit var btnFuzzyPinyin: Button
@@ -226,6 +223,9 @@ class SettingsActivity : ComponentActivity() {
         // 换包名后的第一次进入：把旧包（com.jinn.inputmethod）的偏好与已下载模型搬过来。
         // 只补缺不覆盖，旧包不存在则静默跳过（见 LegacyMigration）。
         LegacyMigration.runOnce(this)
+        // 在线翻译已下线：老偏好（含旧包迁移来的 translateEnabled）一律关掉，
+        // 否则键盘功能面板里还会出现一个无处配置的「翻译」键
+        prefs.translateEnabled = false
 
         spinnerShuangpin = findViewById(R.id.spinner_shuangpin)
 
@@ -237,17 +237,7 @@ class SettingsActivity : ComponentActivity() {
         switchAutoShowKeyboard = findViewById(R.id.switch_auto_show_keyboard)
         switchUserLearning = findViewById(R.id.switch_user_learning)
         switchPredict = findViewById(R.id.switch_predict)
-        // 在线翻译（BYOK）：开关 + 入口 + 状态摘要，文案全部代码下发（strings.xml 默认不改动）
-        switchTranslate = findViewById(R.id.switch_translate)
-        switchTranslate.text = TEXT_TRANSLATE_SWITCH
-        btnTranslateSettings = findViewById(R.id.btn_translate_settings)
-        btnTranslateSettings.text = TEXT_TRANSLATE_SETTINGS
-        btnTranslateSettings.setOnClickListener {
-            Diagnostics.i(TAG, "设置页: 打开翻译设置")
-            runCatching { startActivity(Intent(this, TranslationSettingsActivity::class.java)) }
-                .onFailure { Diagnostics.w(TAG, "打开翻译设置失败: ${it.message}") }
-        }
-        textTranslateState = findViewById(R.id.text_translate_state)
+        // 在线翻译（BYOK）已整体下线：卡片、开关、配置入口与状态摘要一并删除
 
         // 只使用繁体字：候选里的简体字全部替换为繁体字（文案同样代码下发）
         switchUseTraditional = findViewById(R.id.switch_use_traditional)
@@ -471,8 +461,6 @@ class SettingsActivity : ComponentActivity() {
             if (auto) onAutoChecked(r) else onUpdateChecked(r)
         }
 
-        // 翻译设置页返回：状态摘要（已配置 / 未配置）可能已变
-        if (::textTranslateState.isInitialized) refreshTranslateState()
         // 从分类词库页返回：刚下完 2 级词库时提醒态要收回去，否则按钮一直亮着
         refreshDictEntryEmphasis()
         // 首启引导：每次回到本页都按系统真实状态重写这两个按钮（启用 ≠ 选中，是两件事）
@@ -647,7 +635,6 @@ class SettingsActivity : ComponentActivity() {
 
     private fun loadPrefs() {
         switchAutoShowKeyboard.isChecked = prefs.autoShowKeyboard
-        bindTranslateCard()
 
         switchUseTraditional.isChecked = prefs.useTraditional
         switchUserLearning.isChecked = prefs.userLearning
@@ -940,43 +927,6 @@ class SettingsActivity : ComponentActivity() {
     private fun openUrl(url: String) {
         runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
             .onFailure { Diagnostics.w(TAG, "打开更新页失败: ${it.message}") }
-    }
-
-    /**
-     * 翻译卡片：开关写 [Prefs.translateEnabled]（键盘功能面板据此决定是否显示「翻译」键，
-     * 收起键盘再弹出即生效，不需要重启）；状态摘要只说「已配置 / 未配置」，
-     * 不回显任何凭据字符（凭据本身在翻译设置页里可见可改）。
-     */
-    private fun bindTranslateCard() {
-        switchTranslate.isChecked = prefs.translateEnabled
-        switchTranslate.setOnCheckedChangeListener { _, checked ->
-            prefs.translateEnabled = checked
-            Diagnostics.i(TAG, "翻译功能: $checked")
-        }
-        refreshTranslateState()
-    }
-
-    private fun refreshTranslateState() {
-        val provider = TranslationProviderId.of(prefs.translateProvider)
-        // 注意：用「不可用成因」而不是 `translationProvider() != null`（2026-10-03 修复 L-815）：
-        // ① `null` 不再区分「没填凭据」与「端点不是 https」，摘要必须分因，否则 http 端点用户
-        //    会去反复检查已经填好的 Key 与模型名；② 顺带**省掉一次 provider 组装**（那会解密凭据）。
-        val reason = prefs.translateNotReadyReason()
-        // 目标语言按 Provider 取：OpenAI 兼容用的是**它自己那套**（配置页里选，12 项预设 + 自定义），
-        // 显示 translateTarget 会是一个永远不生效的死值（2026-09-30 审查发现 —— 用户改了
-        // 本页的下拉、摘要却报另一套语言，指向与实际行为不符）
-        val targetLabel = if (provider == TranslationProviderId.OPENAI) {
-            prefs.openAiTargetLanguage
-        } else {
-            TranslationLanguage.of(prefs.translateTarget).label
-        }
-        textTranslateState.text = when {
-            reason == Prefs.TranslateNotReady.NONE -> "已配置：${provider.label} · 目标 $targetLabel"
-            // 端点不合格：用户该改的是 Base URL，不是凭据 —— 文案与键盘 toast 同一处定义（L-816）
-            reason == Prefs.TranslateNotReady.ENDPOINT ->
-                "${provider.label}：${TranslationError.INSECURE.message}"
-            else -> "未配置：点「翻译设置」填写 ${provider.label} 凭据"
-        }
     }
 
     // ── 保存并重启输入法进程 ──────────────────────────────────────────
@@ -1769,8 +1719,6 @@ class SettingsActivity : ComponentActivity() {
         const val TEXT_USE_TRADITIONAL = "只使用繁体字"
 
         // 在线翻译（BYOK）：卡片文案（页面内的标题 / 说明 / 按钮文案在 TranslationSettingsActivity 里下发）
-        const val TEXT_TRANSLATE_SWITCH = "启用翻译(需要联网,发送原文,接收译文)"
-        const val TEXT_TRANSLATE_SETTINGS = "翻译设置"
 
         const val TEXT_BUSY_WRITE = "正在写入文件…"
         const val TEXT_READ_FAIL = "无法读取所选文件：可能已被移走、授权已失效，或不是本应用的加密备份包" +
