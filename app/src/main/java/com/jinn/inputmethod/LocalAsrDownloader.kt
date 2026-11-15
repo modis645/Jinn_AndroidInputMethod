@@ -60,6 +60,48 @@ internal object LocalAsrDownloader {
     }
 
     /**
+     * 可选件：silero VAD 模型（约 2 MB 直链）。进度占 92..99 这一段。
+     *
+     * 失败一律吞掉：SenseVoice 本体已经就位时，语音功能照常可用，只是长句回到
+     * 「整段解码」的老路径 —— 绝不能因为一个 2 MB 的可选件把整次下载判成失败，
+     * 那会让用户重新下一遍 163 MB。
+     */
+    private fun downloadVad(context: Context, onProgress: (Int) -> Unit): Boolean {
+        val tmp = File(context.cacheDir, "vad-download.onnx")
+        var read = 0L
+        return try {
+            val executing = http.newCall(Request.Builder().url(LocalAsrModel.VAD_URL).build())
+            call = executing
+            executing.execute().use { response ->
+                if (!response.isSuccessful) return false
+                val body = response.body ?: return false
+                val total = body.contentLength()
+                body.byteStream().use { input ->
+                    tmp.outputStream().use { output ->
+                        val buf = ByteArray(64 * 1024)
+                        while (true) {
+                            if (cancelled) return false
+                            val n = input.read(buf)
+                            if (n <= 0) break
+                            output.write(buf, 0, n)
+                            read += n
+                            if (total > 0) onProgress(92 + (read * 7 / total).toInt())
+                        }
+                    }
+                }
+            }
+            if (read <= 0L) return false
+            tmp.renameTo(LocalAsrModel.vadFile(context))
+        } catch (t: Throwable) {
+            Diagnostics.i("LocalAsr", "VAD 下载失败（不影响识别）: ${t.message}")
+            false
+        } finally {
+            call = null
+            tmp.delete()
+        }
+    }
+
+    /**
      * 下载 + 解包。回调都在**调用线程**（后台线程）上触发，界面侧自己切主线程。
      *
      * @param onProgress 0..100
@@ -174,6 +216,8 @@ internal object LocalAsrDownloader {
                     } else {
                         ok = true
                     }
+                    // ── 4. VAD（可选件，约 2 MB）：失败只降级成「整段解码」，不算下载失败 ──
+                    if (ok) downloadVad(context, onProgress)
                 }
             } catch (t: Throwable) {
                 reason = "下载中断：" + (t.message ?: t.javaClass.simpleName)
