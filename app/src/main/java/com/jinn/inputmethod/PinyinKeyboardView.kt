@@ -908,6 +908,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 上一次画出来的电平（做平滑用，避免 10Hz 回调把横条画成闪烁） */
     private var lastVoiceLevel = 0f
 
+    /** 电平条因 host 宽为 0 补帧重试的一次性标志（见 [setVoiceLevel]） */
+    private var voiceLevelRetryPending = false
+
     private val btnBackspace: View
     private val btnEnter: View
     private val btnShift: ImageButton
@@ -3676,7 +3679,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             holdBarHeightOnEmpty -> View.INVISIBLE
             else -> View.GONE
         }
-        viewCandidatePinyin.text = if (empty) "" else withCaret(text.orEmpty())
+        viewCandidatePinyin.text = if (empty) "" else pinyinDisplayText(text.orEmpty())
         applyPinyinInset()
     }
 
@@ -3686,6 +3689,32 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 显示串是按音节打标后的结果（含分隔符），光标位置按**字母计数**换算，
      * 不能直接用 composing 的下标——那样标记会落在某个音节中间。
      */
+    /**
+     * 拼音条的显示串（含光标标记），分词符单独上色。
+     *
+     * 分隔符 `'` 原先与音节同色：`zhong'guo'ren` 读起来像一长串字母，用户看不出音节边界
+     * （2026-11-17：「分词符颜色变一下，和拼音颜色区分」）。这里用主题的**次要文字色**
+     * （浅色皮是灰、深色皮是暗白）给分隔符单独上色，不改字号、不改字距，
+     * 因此换行 / 光标命中（[withCaret] 的按字母计数、拼音条点击定位）全都不受影响。
+     */
+    private fun pinyinDisplayText(text: String): CharSequence {
+        val shown = withCaret(text)
+        val sep = PinyinEngine.SEPARATOR_CHAR
+        if (shown.indexOf(sep) < 0) return shown
+        val sp = android.text.SpannableString(shown)
+        val sepColor = skinToken(skin.functionHint, R.color.text_secondary)
+        var i = shown.indexOf(sep)
+        while (i >= 0) {
+            sp.setSpan(
+                android.text.style.ForegroundColorSpan(sepColor),
+                i, i + 1,
+                android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+            )
+            i = shown.indexOf(sep, i + 1)
+        }
+        return sp
+    }
+
     private fun withCaret(text: String): String {
         if (pinyinCaret < 0 || shuangpinMode) return text
         var letters = 0
@@ -5068,7 +5097,19 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private fun setVoiceLevel(level: Float) {
         val bar = btnVoiceLevel ?: return
         val host = btnVoiceLong.width
-        if (host <= 0) return
+        if (host <= 0) {
+            // 视图刚重建 / 首次显示时还没测量完：host 宽是 0，照原样 return 会让电平条
+            // 整段录音都不出现（电平常在 10Hz 打进来，而下一次回调前往往已经安静了）。
+            // 补一帧重试，最多一轮，避免死循环。
+            if (!voiceLevelRetryPending) {
+                voiceLevelRetryPending = true
+                btnVoiceLong.post {
+                    voiceLevelRetryPending = false
+                    setVoiceLevel(lastVoiceLevel)
+                }
+            }
+            return
+        }
         val maxW = host - dpFloat(12f).toInt()
         if (maxW <= 0) return
         val scaled = VOICE_LEVEL_FLOOR + (1f - VOICE_LEVEL_FLOOR) * level.coerceIn(0f, 1f)
