@@ -230,6 +230,12 @@ class SettingsActivity : ComponentActivity() {
         // 「拼音输入方案」卡 2026-11-15 已整卡删除（用户只留全拼，双拼/键面韵母一并下线）：
         // 控件在代码里保留为 stub，读写逻辑（useShuangpin=false 强制全拼）不变。
         spinnerShuangpin = UserAwareSpinner(this)
+        // 副标题带上真实版本号：包名换过之后「看到的界面是哪个包」只能靠这个辨认
+        // （用户 2026-11-15：装了两个输入法时无法判断哪一版在生效）。
+        runCatching {
+            findViewById<android.widget.TextView>(R.id.text_settings_subtitle).text =
+                getString(R.string.settings_subtitle) + " · 版本 " + BuildConfig.VERSION_CODE
+        }
 
         btnEnable = findViewById(R.id.btn_enable)
         btnPick = findViewById(R.id.btn_pick)
