@@ -1915,6 +1915,9 @@ object PinyinEngine {
         }
         userWords.clear()
         synchronized(abbrevCache) { abbrevCache.clear() }
+        // 台账里每个词出现过几次 = 历史累计选择次数（重启后连击归零，但累计那条路仍然成立）
+        pickTotals.clear()
+        for ((word, _) in read.picks) pickTotals.merge(toSimplified(word), 1) { a, b -> a + b }
         var n = 0
         for ((word, pinyin) in read.picks) {
             if (addUserWord(word, pinyin)) n++
@@ -1925,8 +1928,17 @@ object PinyinEngine {
     /** 记一条自造词（台账写入后立即生效，不必等下次启动） */
     fun noteUserWord(word: String, pinyin: String): Boolean = addUserWord(word, pinyin)
 
-    /** 该词累计被选中多少次（含本次；来自 [UserFrequency]，带长期不用衰减） */
-    fun pickCountOf(word: String): Int = UserFrequency.weightOf(toSimplified(word)).toInt()
+    /**
+     * 词（简体）→ 累计被选中次数。
+     *
+     * 不用 [UserFrequency] 的权重当计数：那张表可以被用户关掉、还按 librime 公式随时间衰减，
+     * 用它做门槛会出现「同一个词打了 5 次还是 2 次」的怪事（用户 2026-11-16 报
+     * 「全拼连续输入三次没有进入词库」）。台账里已有的历史次数在装载时补进来。
+     */
+    private val pickTotals = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
+    /** 只读查询（诊断 / 界面用），不累加 */
+    fun pickCountOf(word: String): Int = pickTotals[toSimplified(word)] ?: 0
 
     /** 某一串输入（含简拼 / 混拼）最近连续命中的是哪个词、连了几次 */
     private class PickStreak(var word: String = "", var count: Int = 0)
@@ -1943,17 +1955,27 @@ object PinyinEngine {
      *    兜住「每次都用不同拼法（`lzw` / `liuzhiwu`）打同一个词」这种正常用法。
      *
      * @param typedKey 本次实际的输入串（已去分隔符）；空串（残码结算等时机）时只看累计次数
-     * @param cumulative 该词累计被选中次数（含本次）
      */
-    fun shouldAdmitUserWord(word: String, typedKey: String, cumulative: Int): Boolean {
+    fun shouldAdmitUserWord(word: String, typedKey: String): Boolean {
         if (word.isEmpty()) return false
-        if (cumulative >= ADMIT_TOTAL_PICKS) return true
-        if (typedKey.isEmpty()) return false
-        val streak = pickStreaks.getOrPut(typedKey) { PickStreak() }
-        synchronized(streak) {
-            if (streak.word == word) streak.count++ else { streak.word = word; streak.count = 1 }
-            return streak.count >= ADMIT_STREAK_PICKS
+        val key = toSimplified(word)
+        val total = pickTotals.merge(key, 1) { a, b -> a + b } ?: 1
+        var streakCount = 0
+        if (typedKey.isNotEmpty()) {
+            val streak = pickStreaks.getOrPut(typedKey) { PickStreak() }
+            synchronized(streak) {
+                if (streak.word == word) streak.count++ else { streak.word = word; streak.count = 1 }
+                streakCount = streak.count
+            }
         }
+        val admit = streakCount >= ADMIT_STREAK_PICKS || total >= ADMIT_TOTAL_PICKS
+        // 门槛判定必须留痕：用户说「打了三次没进词库」时，日志能直接回答是哪条没过
+        Diagnostics.i(
+            TAG,
+            "收录门槛: \"$word\" 累计=$total 连击=$streakCount（键=${typedKey.ifEmpty { "-" }}）→ " +
+                if (admit) "收录" else "不收",
+        )
+        return admit
     }
 
     /** 同一串拼音连续选中同一词多少次才收录（主流输入法口径） */
@@ -2474,6 +2496,21 @@ object PinyinEngine {
         }.apply { name = "abbrev-index"; isDaemon = true }.start()
     }
 
+    /** 单字母的零声母音节（啊 / 哦 / 饿）：只有这几个算「打全的音节」 */
+    private val SINGLE_LETTER_SYLLABLES = setOf("a", "e", "o")
+
+    /**
+     * 输入是不是**纯全拼**（每个音节都打全了）。
+     *
+     * `m` / `n` / `ng` / `hm` / `hng` 这类叹词音节在音节表里合法，但用户把它们敲出来
+     * 几乎总是「首字母」而不是「打全的音节」。只有 `a` / `e` / `o` 这种真·单字母零声母音节
+     * （啊 / 哦 / 饿）才算全拼，其余单字母一律当作简拼 / 混拼的声母缩写。
+     */
+    private fun isFullPinyinInput(typed: String): Boolean {
+        val segs = splitSyllables(typed) ?: return false
+        return segs.all { it.length > 1 || it in SINGLE_LETTER_SYLLABLES }
+    }
+
     /** 把一个完整的拼音键拆成音节；拆不干净（有残码）返回 null */
     private fun splitSyllables(key: String): List<String>? {
         val (sylls, rest) = segment(key)
@@ -2574,8 +2611,13 @@ object PinyinEngine {
         // 输入**本身**就是一串完整音节（`you` / `dao` / `nihao`）⇒ 用户在打全拼，
         // 简拼一条都不该出。否则 `you` 会被拆成 y+o+u 之类的段去撞词库，
         // 撞出「烟垢 / 颜狗 / 檐沟」这种与输入无关的多字词，还排在「有」前面。
-        // 混拼不受影响：`daoy` / `wokk` 的尾部残码永远切不干净，走不到这个分支。
-        if (splitSyllables(typed) != null) return emptyList()
+        //
+        // ⚠ 判据不能直接用 `splitSyllables(...) != null`（用户 2026-11-16 报「输入 myou
+        // 只出 you 的单字」）：`m` / `n` / `ng` 这几个叹词音节在音节表里是合法音节，
+        // 于是 `myou` 会被「拆干净」成 [m, you] 而被当成全拼，简拼整段被跳过 ——
+        // 而 [m, you] 恰恰是「首字母 m + 打全的 you」这种**混拼**。判据改成
+        // 「每一段要么是多字母音节、要么是 a/e/o 这类单字母零声母音节」才算全拼。
+        if (isFullPinyinInput(typed)) return emptyList()
         synchronized(abbrevCache) { abbrevCache[typed]?.let { return it } }
 
         // 索引一律在后台线程建好再用：建索引要遍历全部词库键，放在按键路径上会拖住 UI
