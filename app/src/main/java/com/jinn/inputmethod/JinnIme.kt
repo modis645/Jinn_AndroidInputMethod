@@ -4637,11 +4637,18 @@ class JinnIme : InputMethodService() {
 
     // ── 音频焦点 / 网络 / VAD ───────────────────────────────
 
-    /** 本地 VAD：连续录音模式静音过久自动收尾出结果，长按模式只提示 */
+    /**
+     * 本地 VAD 报「安静下来了」：**两种模式都只提示，不再自动收尾**。
+     *
+     * 连续录音的语义是「点一下开始、再点一下结束」（用户 2026-11-16 明确），一次长口述里的自然停顿
+     * （想词、换气、翻页）在 VAD 眼里与「说完了」无法区分 —— 原先 TOGGLE 下静音直接
+     * `stopRecording(commit = true)`，用户看到的就是「还在说话，它已经上屏了」（2026-11-17 复核）。
+     * 收尾仍有两个出口：手动点「结束」、到 [MAX_TOGGLE_MS] 上限自动收。
+     */
     private fun onSilenceDetected() {
         Diagnostics.i(TAG, "onSilenceDetected: mode=$mode")
         if (mode == Mode.TOGGLE) {
-            stopRecording(commit = true)
+            setHint(getString(R.string.hint_silence_still_recording))
         } else {
             setHint(getString(R.string.hint_silence))
         }
