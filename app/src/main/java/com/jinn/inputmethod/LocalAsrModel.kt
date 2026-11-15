@@ -88,6 +88,15 @@ internal object LocalAsrModel {
     const val ARCHIVE_NAME = "sense-voice-small.tar.bz2"
 
     /**
+     * 模型文件的下限体积（实测 239.2 MB）。
+     *
+     * 之前就绪判定只看「文件存在且非空」—— 被外部清理工具截断、或写到一半被杀，
+     * 一个 0 字节或半截的 model.int8.onnx 也会被判成「已就绪」，然后在识别时莫名失败。
+     * 留足余量取 200 MB：正常件永远超过它，被截的件永远达不到。
+     */
+    const val MODEL_MIN_BYTES = 200_000_000L
+
+    /**
      * 归档的下载顺序：**官方直连优先，加速前缀兜底**（理由同 [VAD_URLS]）。
      *
      * 之前把三个公共加速站放在最前，结果代理常回「200 + 一段 HTML 错误页」，下载线程
@@ -114,7 +123,7 @@ internal object LocalAsrModel {
 
     /** 两件文件都在才算就绪（只看存在性，完整性由下载端的 sha256 / 大小校验保证） */
     fun isReady(context: Context): Boolean =
-        modelFile(context).isFile && modelFile(context).length() > 0 &&
+        modelFile(context).isFile && modelFile(context).length() > MODEL_MIN_BYTES &&
             tokensFile(context).isFile && tokensFile(context).length() > 0
 
     /** 已占用的字节数（设置页「存储占用」与删除入口用） */
