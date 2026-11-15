@@ -80,6 +80,46 @@ class VoiceSettingsActivity : ComponentActivity() {
     private lateinit var btnLocalAsrDelete: android.widget.Button
     private lateinit var btnLocalAsrImport: android.widget.Button
     private lateinit var textLocalAsrLog: android.widget.TextView
+
+    /** 最近一次下载进度（0..100）。无参刷新不能再把它抹成 0：那会让进度条永远停在 0%，
+     *  看起来就是「显示在下载、实际没下载」（用户 2026-11-16 第 1 条） */
+    private var lastDownloadPct = 0
+
+    /** 用户在本次进程里主动点过「取消下载」：别在他下次进页面时又自动开一次 */
+    private var localAsrUserCancelled = false
+
+    /** 卡死看门狗：进度与阶段连续 [DOWNLOAD_STALL_MS] 不动就停掉，把按钮还给用户 */
+    private var downloadWatchKey = ""
+    private var downloadWatchSince = 0L
+    private val uiHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val downloadWatchdog = object : Runnable {
+        override fun run() {
+            if (!LocalAsrDownloader.isRunning()) {
+                downloadWatchKey = ""
+                downloadWatchSince = 0L
+                return
+            }
+            val key = "$lastDownloadPct|${LocalAsrDownloader.lastStage.orEmpty()}"
+            val now = System.currentTimeMillis()
+            if (key != downloadWatchKey) {
+                downloadWatchKey = key
+                downloadWatchSince = now
+                refreshLocalAsrStatus()
+            } else if (downloadWatchSince > 0 && now - downloadWatchSince > DOWNLOAD_STALL_MS) {
+                val stage = LocalAsrDownloader.lastStage ?: "-"
+                Diagnostics.w(TAG, "离线语音：下载 ${DOWNLOAD_STALL_MS / 1000}s 无进展（$stage），自动停止")
+                LocalAsrDownloader.cancel()
+                downloadWatchKey = ""
+                downloadWatchSince = 0L
+                textLocalAsrStatus.text =
+                    "下载卡住了（${DOWNLOAD_STALL_MS / 1000} 秒没有进展，停在：$stage），已停止。
+" +
+                        "再点一次「${TEXT_LOCAL_ASR_DOWNLOAD}」重试；也可以在电脑上下好模型再用「${TEXT_LOCAL_ASR_IMPORT}」。"
+                refreshLocalAsrStatus()
+            }
+            uiHandler.postDelayed(this, 3_000L)
+        }
+    }
     private lateinit var spinnerVoiceBackend: UserAwareSpinner
     private lateinit var editXfAppId: EditText
     private lateinit var editXfApiKey: EditText
@@ -123,8 +163,6 @@ class VoiceSettingsActivity : ComponentActivity() {
     private lateinit var checkLockServer: CheckBox
     private lateinit var spinnerLanguage: UserAwareSpinner
     private lateinit var spinnerDefaultMode: UserAwareSpinner
-    private lateinit var checkStrip: CheckBox
-    private lateinit var checkComposing: CheckBox
     private lateinit var textSaveHint: TextView
     private lateinit var btnSave: Button
     private lateinit var containerProviders: LinearLayout
@@ -363,8 +401,6 @@ class VoiceSettingsActivity : ComponentActivity() {
         checkLockServer = CheckBox(this)   // 布局里已删除（在线语音下线，2026-11-15）：留给保存/回填逻辑一个空壳，界面上不可见
         spinnerLanguage = findViewById(R.id.spinner_language)
         spinnerDefaultMode = findViewById(R.id.spinner_default_mode)
-        checkStrip = findViewById(R.id.check_strip)
-        checkComposing = findViewById(R.id.check_composing)
         containerProviders = LinearLayout(this)   // 布局里已删除（在线语音下线，2026-11-15）：留给保存/回填逻辑一个空壳，界面上不可见
 
         // 语音测试：结果直接落进多行输入框（用户能在同一个位置看到有没有效果）
@@ -617,13 +653,9 @@ class VoiceSettingsActivity : ComponentActivity() {
             scheduleAutosave()
         }
 
-        // 识别选项即时保存：勾选即写入，下次识别立即生效
-        checkStrip.setOnCheckedChangeListener { _, checked ->
-            prefs.stripTrailingPunc = checked
-        }
-        checkComposing.setOnCheckedChangeListener { _, checked ->
-            prefs.useComposing = checked
-        }
+        // 「去句尾标点」「语音文字实时回显」两个勾选框已删（用户 2026-11-16）：
+        // 本机离线是**整句解码**，结果一次性出来，没有可回显的中间态 —— 实时回显是个空开关；
+        // 去句尾标点是模型 ITN 之后再做一层裁剪，实测没人用，留着只是多两个会误点的开关。
         // 固定 NAS 地址/端口：勾选后编辑框变灰不可编辑
         checkLockServer.setOnCheckedChangeListener { _, checked ->
             prefs.lockServer = checked
@@ -687,8 +719,6 @@ class VoiceSettingsActivity : ComponentActivity() {
     private fun loadPrefs() {
         editHost.setText(prefs.host)
         editPort.setText(prefs.port.toString())
-        checkStrip.isChecked = prefs.stripTrailingPunc
-        checkComposing.isChecked = prefs.useComposing
         checkLockServer.isChecked = prefs.lockServer
         applyServerLock()
         // 后端选择：取值已由 Prefs 归一到六个合法值，indexOf 不会退到 -1
@@ -758,9 +788,14 @@ class VoiceSettingsActivity : ComponentActivity() {
      * 失败仍由卡片上的按钮手动重试，避免弱网下无休止地拉 163 MB。
      */
     private fun autoDownloadLocalAsrOnce() {
-        if (autoDownloadTried) return
-        autoDownloadTried = true
         if (LocalAsrModel.isReady(this) || LocalAsrDownloader.isRunning()) return
+        // 用户在本次进程里点过「取消下载」就别再自动开：他要的是自己控制
+        if (localAsrUserCancelled) {
+            Diagnostics.i(TAG, "离线语音：本次会话已取消过下载，不再自动开始")
+            return
+        }
+        // 每次进页面都试一次（用户 2026-11-16：「第一次进去显示取消下载、实际没下载，
+        // 得退出再进来才可以下载」—— 一次性标志让第一次的失败再也救不回来）
         Diagnostics.i(TAG, "离线语音：模型缺失，自动开始下载")
         startLocalAsrDownload()
     }
@@ -805,8 +840,16 @@ class VoiceSettingsActivity : ComponentActivity() {
         textLocalAsrDesc.text = TEXT_LOCAL_ASR_DESC
         when {
             running -> {
-                val p = progress ?: 0
-                textLocalAsrStatus.text = "正在下载模型… $p%（完成后自动解包写入本机）"
+                // 无参调用（阶段变化 / 看门狗 / 进页面）不能把进度抹回 0，否则进度条永远不动
+                val p = progress ?: lastDownloadPct
+                lastDownloadPct = p
+                val stage = LocalAsrDownloader.lastStage
+                textLocalAsrStatus.text = if (stage.isNullOrBlank()) {
+                    "正在下载模型… $p%（完成后自动解包写入本机）"
+                } else {
+                    "$stage
+已下载 $p%（完成后自动解包写入本机）"
+                }
                 progressLocalAsr.visibility = View.VISIBLE
                 progressLocalAsr.progress = p
                 btnLocalAsrDownload.text = TEXT_LOCAL_ASR_CANCEL
@@ -878,16 +921,19 @@ class VoiceSettingsActivity : ComponentActivity() {
     private fun onLocalAsrDownloadClicked() {
         if (LocalAsrDownloader.isRunning()) {
             LocalAsrDownloader.log(this, "用户点了取消")
+            localAsrUserCancelled = true
             LocalAsrDownloader.cancel()
-            refreshLocalAsrStatus(0)
+            refreshLocalAsrStatus()
             return
         }
+        localAsrUserCancelled = false
         // 先在本帧把「已开始」写到界面上：网络请求是异步的，之前要等后台线程回调，
         // 弱网/首次 DNS 解析的几百毫秒里按钮和文字都不动，观感就是「点了没反应」。
         LocalAsrDownloader.log(this, "用户点了下载")
         textLocalAsrStatus.text = "已开始下载，正在准备连接…"
         progressLocalAsr.visibility = View.VISIBLE
         progressLocalAsr.progress = 0
+        lastDownloadPct = 0
         btnLocalAsrDownload.text = TEXT_LOCAL_ASR_CANCEL
         startLocalAsrDownload()
     }
@@ -899,7 +945,12 @@ class VoiceSettingsActivity : ComponentActivity() {
      * 用 applicationContext：用户可能下载到一半就退出设置页，模型仍应下完（也不把 Activity 拖住）。
      */
     private fun startLocalAsrDownload() {
-        refreshLocalAsrStatus(0)
+        refreshLocalAsrStatus(lastDownloadPct)
+        // 看门狗：起跑就排上（自己在「不在跑」时静默退出并停止续排）
+        downloadWatchKey = ""
+        downloadWatchSince = 0L
+        uiHandler.removeCallbacks(downloadWatchdog)
+        uiHandler.postDelayed(downloadWatchdog, 3_000L)
         LocalAsrDownloader.download(
             // 用 applicationContext：用户可能下载到一半就退出设置页，模型仍应下完（也不把 Activity 拖住）
             context = applicationContext,
@@ -929,7 +980,7 @@ class VoiceSettingsActivity : ComponentActivity() {
             },
         )
         // download() 一进来就把任务标记成「在跑」，这里再刷一次，按钮立刻变「取消下载」
-        refreshLocalAsrStatus(0)
+        refreshLocalAsrStatus(lastDownloadPct)
     }
 
     /**
@@ -1184,7 +1235,7 @@ class VoiceSettingsActivity : ComponentActivity() {
             spinner.isEnabled = enabled
         }
         for (box in revealChecks().map { it.second }) box.isEnabled = enabled
-        for (box in listOf(switchVoiceInput, checkStrip, checkComposing, checkLockServer)) {
+        for (box in listOf(switchVoiceInput, checkLockServer)) {
             box.isEnabled = enabled
         }
         if (enabled) applyServerLock()
@@ -1808,8 +1859,6 @@ class VoiceSettingsActivity : ComponentActivity() {
         // 语音关闭时上面的校验被跳过，port 可能为 null，退回默认端口
         prefs.port = port ?: Prefs.DEFAULT_PORT
         prefs.language = readLanguage()
-        prefs.stripTrailingPunc = checkStrip.isChecked
-        prefs.useComposing = checkComposing.isChecked
 
         // 提示词是用户自己写的正文（可能含个人信息），只记长度不记内容；
         // 凭据同样只记长度（绝不出原文）
@@ -2068,9 +2117,10 @@ class VoiceSettingsActivity : ComponentActivity() {
     }
 
     private companion object {
-        /** 自动下载只在本进程试一次（见 [autoDownloadLocalAsrOnce]） */
-        private var autoDownloadTried = false
         const val TAG = "VoiceSettings"
+
+        /** 进度与阶段都不动的容忍上限：到点就停掉，把按钮还给用户（见 downloadWatchdog） */
+        const val DOWNLOAD_STALL_MS = 60_000L
 
         /** 页面标题（= 设置页入口按钮上的那句） */
         const val TEXT_TITLE = "离线语音"
