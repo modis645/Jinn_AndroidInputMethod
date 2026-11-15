@@ -99,7 +99,8 @@ class VoiceSettingsActivity : ComponentActivity() {
                 downloadWatchSince = 0L
                 return
             }
-            val key = "$lastDownloadPct|${LocalAsrDownloader.lastStage.orEmpty()}"
+            val key = "${maxOf(lastDownloadPct, LocalAsrDownloader.lastProgress)}|" +
+                LocalAsrDownloader.lastStage.orEmpty()
             val now = System.currentTimeMillis()
             if (key != downloadWatchKey) {
                 downloadWatchKey = key
@@ -484,6 +485,13 @@ class VoiceSettingsActivity : ComponentActivity() {
         // 之前这一行被误放在隐藏 spinner 的 onItemSelected 里 —— 那个选中事件不一定会来，
         // 于是「打开页面自动下载」形同不存在（用户 2026-11-15 第 2 次反馈）。
         autoDownloadLocalAsrOnce()
+        // 已有任务在跑（典型是 IME 启动时自己发起的那次）：本页没有它的进度回调，
+        // 靠看门狗每 3 秒刷新一次，进度条和日志才会动 —— 否则页面永远停在 0%，
+        // 看起来就是「显示取消下载、其实没下载」。
+        if (LocalAsrDownloader.isRunning()) {
+            uiHandler.removeCallbacks(downloadWatchdog)
+            uiHandler.postDelayed(downloadWatchdog, 3_000L)
+        }
 
         // 清掉上次被强杀 / 崩溃留下的下载临时件（归档 + 解包目录，163 MB 级）。
         // 只碰 cacheDir 里的过程文件，**不动** filesDir/local-asr 里已下好的模型。
@@ -839,8 +847,10 @@ class VoiceSettingsActivity : ComponentActivity() {
         textLocalAsrDesc.text = TEXT_LOCAL_ASR_DESC
         when {
             running -> {
-                // 无参调用（阶段变化 / 看门狗 / 进页面）不能把进度抹回 0，否则进度条永远不动
-                val p = progress ?: lastDownloadPct
+                // 无参调用（阶段变化 / 看门狗 / 进页面）不能把进度抹回 0，否则进度条永远不动。
+                // 同时读 LocalAsrDownloader.lastProgress：任务可能是 IME 启动时自己发起的，
+                // 本页没有它的回调，只认自己的 lastDownloadPct 会一直停在 0%（看着像「没在下载」）。
+                val p = progress ?: maxOf(lastDownloadPct, LocalAsrDownloader.lastProgress)
                 lastDownloadPct = p
                 val stage = LocalAsrDownloader.lastStage
                 textLocalAsrStatus.text = if (stage.isNullOrBlank()) {
