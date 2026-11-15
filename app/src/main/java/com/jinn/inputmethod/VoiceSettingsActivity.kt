@@ -283,12 +283,8 @@ class VoiceSettingsActivity : ComponentActivity() {
             setOnClickListener { confirmExit() }
         }
         registerBackHandling()
-        findViewById<TextView>(R.id.label_voice_server).text = TEXT_SECTION_SERVER
-        findViewById<TextView>(R.id.label_voice_backend).text = TEXT_BACKEND_LABEL
-        findViewById<TextView>(R.id.label_voice_providers).text = TEXT_SECTION_PROVIDERS
-        // 在线服务商清单是纯说明 + 后端切换的配套内容，随在线后端一起下线
-        findViewById<View>(R.id.card_voice_providers).visibility = View.GONE
-        findViewById<TextView>(R.id.text_voice_providers_desc).text = TEXT_PROVIDERS_DESC
+        // 识别服务小节标题 / 后端选择 / 在线服务商清单三块 2026-11-15 已从布局整段删除，
+        // 对应的 findViewById 一并去掉（否则 R.id 不存在，编译期直接报 Unresolved reference）。
         // 总开关卡片的标题是用户点名的句子（逐字，含 ASCII 双引号与逗号位置）
         findViewById<TextView>(R.id.text_voice_master_title).text = TEXT_VOICE_MASTER_TITLE
         findViewById<TextView>(R.id.label_voice_test).text = TEXT_SECTION_TEST
