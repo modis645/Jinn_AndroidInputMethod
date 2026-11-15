@@ -30,17 +30,28 @@ internal object LocalAsrDownloader {
     @Volatile
     private var call: okhttp3.Call? = null
 
+    /**
+     * 任务是否在跑。
+     *
+     * 以前用 `call != null` 判断，但线程起来到请求真正发出之间是空档：设置页在这期间刷新
+     * 会显示「未下载 / 下载」按钮，用户点了没反应（2026-11-15 报「点击下载按钮文字不变，
+     * 再点提示取消下载」）。现在开跑即置位。
+     */
+    @Volatile
+    private var running = false
+
     @Volatile
     private var cancelled = false
 
     /** 归档里两个成员的文件名（见上：按文件名匹配，路径前缀不作要求） */
 
     private val http = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(5, TimeUnit.MINUTES)
+        .connectTimeout(10, TimeUnit.SECONDS)
+        // 读超时按「多久没收到数据」算，不是总量；45 秒足够判断一条源挂了
+        .readTimeout(45, TimeUnit.SECONDS)
         .build()
 
-    fun isRunning(): Boolean = call != null
+    fun isRunning(): Boolean = running
 
     /** 取消在途任务（幂等） */
     fun cancel() {
@@ -116,12 +127,18 @@ internal object LocalAsrDownloader {
      * @param onProgress 0..100
      * @param onDone 成功 = (true, null)；失败 = (false, 给用户看的一句话)
      */
-    fun download(context: Context, onProgress: (Int) -> Unit, onDone: (Boolean, String?) -> Unit) {
+    fun download(
+        context: Context,
+        onProgress: (Int) -> Unit,
+        onDone: (Boolean, String?) -> Unit,
+        onStage: ((String) -> Unit)? = null,
+    ) {
         if (isRunning()) {
             onDone(false, "已有一个下载任务在跑")
             return
         }
         cancelled = false
+        running = true
         Thread({
             val archive = File(context.cacheDir, LocalAsrModel.ARCHIVE_NAME)
             val tmpDir = File(context.cacheDir, "local-asr-unpack")
@@ -134,7 +151,9 @@ internal object LocalAsrDownloader {
 
                 // ── 1. 下载（按镜像清单逐个试，第一个成功的留下）──
                 var lastError: String? = null
-                for ((index, url) in LocalAsrModel.ARCHIVE_URLS.withIndex()) {
+                val urls = LocalAsrModel.ARCHIVE_URLS
+                for ((index, url) in urls.withIndex()) {
+                    runCatching { onStage?.invoke("正在连接第 ${index + 1}/${urls.size} 个下载源…") }
                     if (cancelled) {
                         reason = "已取消"
                         break
@@ -255,6 +274,7 @@ internal object LocalAsrDownloader {
                 reason = "下载中断：" + (t.message ?: t.javaClass.simpleName)
             } finally {
                 call = null
+                running = false
                 archive.delete()
                 tmpDir.deleteRecursively()
             }
