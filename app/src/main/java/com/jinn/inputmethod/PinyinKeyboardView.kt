@@ -2454,8 +2454,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 交给既有 `imageTintList` 着色（与「符号 / 删除」等键同一条着色路径）。
      */
     /** 分词键的两套键面文案（中文态 / 英文态） */
-    private const val TEXT_SHIFT_SPLIT = "分词"
-    private const val TEXT_SHIFT_UPPER = "大写"
+    private val TEXT_SHIFT_SPLIT = "分词"
+    private val TEXT_SHIFT_UPPER = "大写"
 
     private fun buildTextIcon(text: String, sp: Float = 13f): Drawable {
         val px = (sp * resources.displayMetrics.scaledDensity).coerceAtLeast(1f)
