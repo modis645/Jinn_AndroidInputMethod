@@ -286,6 +286,8 @@ class VoiceSettingsActivity : ComponentActivity() {
         findViewById<TextView>(R.id.label_voice_server).text = TEXT_SECTION_SERVER
         findViewById<TextView>(R.id.label_voice_backend).text = TEXT_BACKEND_LABEL
         findViewById<TextView>(R.id.label_voice_providers).text = TEXT_SECTION_PROVIDERS
+        // 在线服务商清单是纯说明 + 后端切换的配套内容，随在线后端一起下线
+        findViewById<View>(R.id.card_voice_providers).visibility = View.GONE
         findViewById<TextView>(R.id.text_voice_providers_desc).text = TEXT_PROVIDERS_DESC
         // 总开关卡片的标题是用户点名的句子（逐字，含 ASCII 双引号与逗号位置）
         findViewById<TextView>(R.id.text_voice_master_title).text = TEXT_VOICE_MASTER_TITLE
@@ -727,7 +729,8 @@ class VoiceSettingsActivity : ComponentActivity() {
     private fun applyVoiceBlocksVisibility(voiceEnabled: Boolean) {
         val visibility = if (voiceEnabled) View.VISIBLE else View.GONE
         cardMicPermission.visibility = visibility
-        cardVoiceBackend.visibility = visibility
+        // 后端选择器下线：只留本机离线，不再让用户切到在线服务
+        cardVoiceBackend.visibility = View.GONE
         applyBackendVisibility()
     }
 
@@ -831,8 +834,14 @@ class VoiceSettingsActivity : ComponentActivity() {
     }
 
     /** 下拉当前选中的后端；下标异常时回落配置里的值（导入的未知取值不被静默改写） */
-    private fun readBackend(): String =
-        BACKEND_VALUES.getOrElse(spinnerVoiceBackend.selectedItemPosition) { prefs.voiceBackend }
+    /**
+     * 幻影版只保留「本机离线」一种后端：在线后端（自建 NAS / 讯飞 / OpenAI 兼容 / 阿里 /
+     * 腾讯 / Azure / 百度 / Deepgram）的配置界面与选择器已整体下线。
+     *
+     * 这里直接返回常量而不是读 spinner：spinner 仍在布局里（隐藏），但只要它还能决定后端，
+     * 保存路径（`saveAndRestart`）与校验路径（`validate`）就仍可能把用户带离离线 —— 那就等于没删。
+     */
+    private fun readBackend(): String = VoiceBackend.LOCAL
 
     /**
      * 显示 / 隐藏 APIKey / APISecret / 各家订阅密钥（APPID、URL、模型名不是秘密，本来就明文）。
