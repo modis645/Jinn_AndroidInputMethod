@@ -122,7 +122,6 @@ class VoiceSettingsActivity : ComponentActivity() {
     private lateinit var checkLockServer: CheckBox
     private lateinit var spinnerLanguage: UserAwareSpinner
     private lateinit var spinnerDefaultMode: UserAwareSpinner
-    private lateinit var editPrompt: EditText
     private lateinit var checkStrip: CheckBox
     private lateinit var checkComposing: CheckBox
     private lateinit var textSaveHint: TextView
@@ -196,7 +195,6 @@ class VoiceSettingsActivity : ComponentActivity() {
     private data class VoiceInputs(
         val host: String,
         val port: String,
-        val prompt: String,
         val language: String,
         val voiceEnabled: Boolean,
         val backend: String,
@@ -364,7 +362,6 @@ class VoiceSettingsActivity : ComponentActivity() {
         checkLockServer = CheckBox(this)   // 布局里已删除（在线语音下线，2026-11-15）：留给保存/回填逻辑一个空壳，界面上不可见
         spinnerLanguage = findViewById(R.id.spinner_language)
         spinnerDefaultMode = findViewById(R.id.spinner_default_mode)
-        editPrompt = findViewById(R.id.edit_prompt)
         checkStrip = findViewById(R.id.check_strip)
         checkComposing = findViewById(R.id.check_composing)
         containerProviders = LinearLayout(this)   // 布局里已删除（在线语音下线，2026-11-15）：留给保存/回填逻辑一个空壳，界面上不可见
@@ -577,7 +574,6 @@ class VoiceSettingsActivity : ComponentActivity() {
         // 回填不算用户改动）；勾选框与默认键盘样式是即时写盘，不进来
         markDirtyOnEdit(editHost)
         markDirtyOnEdit(editPort)
-        markDirtyOnEdit(editPrompt)
         // 讯飞三件凭据同样按保存才写（凭据是敏感输入，不做即时落盘）
         markDirtyOnEdit(editXfAppId)
         markDirtyOnEdit(editXfApiKey)
@@ -685,7 +681,6 @@ class VoiceSettingsActivity : ComponentActivity() {
     private fun loadPrefs() {
         editHost.setText(prefs.host)
         editPort.setText(prefs.port.toString())
-        editPrompt.setText(prefs.prompt)
         checkStrip.isChecked = prefs.stripTrailingPunc
         checkComposing.isChecked = prefs.useComposing
         checkLockServer.isChecked = prefs.lockServer
@@ -1147,7 +1142,7 @@ class VoiceSettingsActivity : ComponentActivity() {
             editOaiBase, editOaiModel, editAliWsUrl, editAliModel,
             editTencentEngine, editAzureBaseUrl, editAzureLanguage,
             editBaiduDevPid, editDeepgramModel, editDeepgramLanguage,
-            editHost, editPort, editPrompt, editVoiceTest,
+            editHost, editPort, editVoiceTest,
         )
         for (field in edits) field.isEnabled = enabled
         for (spinner in listOf(spinnerVoiceBackend, spinnerLanguage, spinnerDefaultMode)) {
@@ -1778,7 +1773,6 @@ class VoiceSettingsActivity : ComponentActivity() {
         // 语音关闭时上面的校验被跳过，port 可能为 null，退回默认端口
         prefs.port = port ?: Prefs.DEFAULT_PORT
         prefs.language = readLanguage()
-        prefs.prompt = editPrompt.text.toString()
         prefs.stripTrailingPunc = checkStrip.isChecked
         prefs.useComposing = checkComposing.isChecked
 
@@ -1787,7 +1781,7 @@ class VoiceSettingsActivity : ComponentActivity() {
         Diagnostics.i(
             TAG,
             "persistInputs: 语音配置已保存 backend=$backend host=$host port=$port " +
-                "lang=${prefs.language} promptLen=${prefs.prompt.length} enabled=$voiceEnabled " +
+                "lang=${prefs.language} enabled=$voiceEnabled " +
                 "xfAppIdLen=${prefs.xfAppId.length} xfApiKeyLen=${prefs.xfApiKey.length} " +
                 "xfApiSecretLen=${prefs.xfApiSecret.length} " +
                 "oaiBase=${prefs.oaiBaseUrl} oaiModel=${prefs.oaiModel} oaiKeyLen=${prefs.oaiApiKey.length} " +
@@ -1919,7 +1913,6 @@ class VoiceSettingsActivity : ComponentActivity() {
     private fun currentInputs(): VoiceInputs = VoiceInputs(
         host = editHost.text.toString(),
         port = editPort.text.toString(),
-        prompt = editPrompt.text.toString(),
         language = readLanguage(),
         voiceEnabled = switchVoiceInput.isChecked,
         backend = readBackend(),
