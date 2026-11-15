@@ -86,7 +86,7 @@ internal object LocalAsrDownloader {
         return false
     }
 
-    /** 从单个地址拉 VAD；代理优先的顺序由 [LocalAsrModel.VAD_URLS] 决定 */
+    /** 从单个地址拉 VAD；源顺序（官方优先）由 [LocalAsrModel.VAD_URLS] 决定 */
     private fun downloadVadFrom(context: Context, url: String, tmp: File, onProgress: (Int) -> Unit): Boolean {
         var read = 0L
         return try {
@@ -110,7 +110,7 @@ internal object LocalAsrDownloader {
                     }
                 }
             }
-            if (read <= 0L) return false
+            if (read < LocalAsrModel.VAD_MIN_BYTES) return false
             tmp.renameTo(LocalAsrModel.vadFile(context))
         } catch (t: Throwable) {
             Diagnostics.i("LocalAsr", "VAD 下载失败（不影响识别）: ${t.message}")
@@ -170,6 +170,12 @@ internal object LocalAsrDownloader {
                                 lastError = "HTTP ${response.code}"
                                 return@use
                             }
+                            // 代理常回「200 + 一段 HTML 错误页」：这种响应也有字节，若只看 got>0
+                            // 就当成功，失败会推迟到解包阶段，用户看到的是「下载无效」。
+                            if (response.header("Content-Type")?.contains("html", ignoreCase = true) == true) {
+                                lastError = "源返回的是网页而不是模型"
+                                return@use
+                            }
                             val body = response.body ?: run {
                                 lastError = "响应为空"
                                 return@use
@@ -201,8 +207,20 @@ internal object LocalAsrDownloader {
                         call = null
                     }
                     if (got > 0L) {
-                        lastError = null
-                        break
+                        onStage?.let { stage ->
+                            runCatching { stage("正在校验第 ${index + 1}/${urls.size} 个源的文件…") }
+                        }
+                        val size = archive.length()
+                        if (size < LocalAsrModel.ARCHIVE_MIN_BYTES) {
+                            lastError = "源返回的字节数不对（$size 字节）"
+                        } else if (LocalAsrModel.verifyArchive(archive)) {
+                            lastError = null
+                            break
+                        } else {
+                            lastError = "模型文件校验不通过"
+                        }
+                        archive.delete()
+                        onProgress(0)
                     }
                     if (cancelled) break
                 }
