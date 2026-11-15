@@ -1259,7 +1259,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         btnShift = root.findViewById(R.id.key_shift)
         // 这枚键现在发的是音节分隔符，继续用原来的「↑ 箭头」会让人以为它还是大写 ——
         // 图标改画成「分词」两个字（白色字形 + 既有的 imageTintList 着色，颜色跟其他功能键一致）
-        btnShift.setImageDrawable(buildTextIcon("分词"))
+        btnShift.setImageDrawable(buildTextIcon(TEXT_SHIFT_SPLIT))
         btnComma = root.findViewById(R.id.key_comma)
         btnPeriod = root.findViewById(R.id.key_period)
         keySemicolon = root.findViewById(R.id.key_semicolon)
@@ -2453,6 +2453,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 也不会因为字形与字号跟键盘其它功能键不一致而显得突兀。字形画成**纯白**，
      * 交给既有 `imageTintList` 着色（与「符号 / 删除」等键同一条着色路径）。
      */
+    /** 分词键的两套键面文案（中文态 / 英文态） */
+    private const val TEXT_SHIFT_SPLIT = "分词"
+    private const val TEXT_SHIFT_UPPER = "大写"
+
     private fun buildTextIcon(text: String, sp: Float = 13f): Drawable {
         val px = (sp * resources.displayMetrics.scaledDensity).coerceAtLeast(1f)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -4721,6 +4725,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 大写锁定：shift 键高亮（背景按设置页的圆角参数动态重建）；
         // 符号层大写键不参与操作：isEnabled=false（无障碍也报「不可用」）+ 置灰，
         // 点击路径另有层守卫（见 bindFunctionKeys），二者互为兜底。
+        // 分词键的键面必须跟着语言变（用户 2026-11-15：「英文键盘，『分词』没有变为大写」）：
+        // 中文态单击插音节分隔符 ⇒ 写「分词」；英文态没有音节可分，单击就是切大小写 ⇒ 写「大写」。
+        // 这也是英文输入能找到大写入口的唯一位置，键面写错等于这个能力看不见。
+        btnShift.setImageDrawable(buildTextIcon(if (englishMode) TEXT_SHIFT_UPPER else TEXT_SHIFT_SPLIT))
+        btnShift.contentDescription = if (englishMode) TEXT_SHIFT_UPPER else TEXT_SHIFT_SPLIT
         refreshShiftBackground()
         btnShift.isEnabled = layer != LAYER_SYMBOL
         btnShift.alpha = if (layer == LAYER_SYMBOL) 0.4f else 1f
