@@ -246,7 +246,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private var pinyinLastTapLetters = -1
 
     /** 拼音条上的光标标记（只用于显示，永远不进 [composing]） */
-    private val caretMark = "｜"
+    // 半角竖线：全角「｜」在拼音行里占满一个汉字宽，插在音节中间会把两侧字母顶开，
+    // 打字时光标一动整行就重新排版（用户 2026-11-17：「光标改为半角」）。
+    private val caretMark = "|"
 
     /** 候选栏刷新已排到下一帧（见 [refreshCandidateBar] 的合并语义） */
     private var candidateRefreshPosted = false
@@ -3700,17 +3702,30 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private fun pinyinDisplayText(text: String): CharSequence {
         val shown = withCaret(text)
         val sep = PinyinEngine.SEPARATOR_CHAR
-        if (shown.indexOf(sep) < 0) return shown
+        val sepAt = shown.indexOf(sep)
+        val caretAt = shown.indexOf(caretMark)
+        if (sepAt < 0 && caretAt < 0) return shown
         val sp = android.text.SpannableString(shown)
-        val sepColor = skinToken(skin.functionHint, R.color.text_secondary)
-        var i = shown.indexOf(sep)
-        while (i >= 0) {
+        if (sepAt >= 0) {
+            val sepColor = skinToken(skin.functionHint, R.color.text_secondary)
+            var i = sepAt
+            while (i >= 0) {
+                sp.setSpan(
+                    android.text.style.ForegroundColorSpan(sepColor),
+                    i, i + 1,
+                    android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+                )
+                i = shown.indexOf(sep, i + 1)
+            }
+        }
+        // 光标单列一色（主题强调色）：与拼音主色、分隔符次要色都不同，一眼能看出插在哪两个字母之间。
+        if (caretAt >= 0) {
+            val caretColor = skinToken(skin.accent, R.color.accent)
             sp.setSpan(
-                android.text.style.ForegroundColorSpan(sepColor),
-                i, i + 1,
+                android.text.style.ForegroundColorSpan(caretColor),
+                caretAt, caretAt + caretMark.length,
                 android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
             )
-            i = shown.indexOf(sep, i + 1)
         }
         return sp
     }
