@@ -2297,6 +2297,16 @@ object PinyinEngine {
     //   3) 命中的词用 DP 逐音节对齐验证：单字母段只校验首字母，音节段要求整段相等。
     // 纯简拼（全段单字母）与任意位置混拼走同一条路径，不再有漏词死角。
 
+    /**
+     * 零声母音节：拼写以元音开头（`a`/`e`/`o`/`ou`/`ai`…）。
+     *
+     * 简拼的单字母段代表「一个音节的**声母**」，而这类音节**没有声母** ——
+     * 让 `o`、`u`、`e` 这类字母去命中它们，等于把 `you` 这类完整音节拆成 y+o+u 去撞词库，
+     * 撞出一堆与输入无关的词（用户 2026-11-16 实测：打 `you` 出现「烟垢 / 颜狗 / 檐沟」）。
+     */
+    private val ZERO_INITIAL_SYLLABLES: Set<String> =
+        setOf("a", "ai", "an", "ang", "ao", "e", "ei", "en", "eng", "er", "o", "ou")
+
     /** 简拼首字母索引：`词的首字母串 to 词库键`，按首字母串排序（配合二分做前缀查找） */
     private var initialsIndex: Array<Pair<String, String>>? = null
 
@@ -2441,6 +2451,8 @@ object PinyinEngine {
                     for (len in 1..maxLen) {
                         val syl = key.substring(pos, pos + len)
                         if (syl[0] != seg[0]) continue
+                        // 单字母段 = 声母。零声母音节（a/e/o/ou/ai…）没有声母，不得被它命中
+                        if (syl in ZERO_INITIAL_SYLLABLES) continue
                         if (!validSyllables.contains(syl)) continue
                         next[pos + len] = true
                     }
@@ -2461,6 +2473,11 @@ object PinyinEngine {
     private fun abbreviationCandidates(typed: String): List<Pair<String, Int>> {
         if (typed.length !in 2..ABBREV_MAX_LENGTH) return emptyList()
         if (typed.any { it !in 'a'..'z' }) return emptyList()
+        // 输入**本身**就是一串完整音节（`you` / `dao` / `nihao`）⇒ 用户在打全拼，
+        // 简拼一条都不该出。否则 `you` 会被拆成 y+o+u 之类的段去撞词库，
+        // 撞出「烟垢 / 颜狗 / 檐沟」这种与输入无关的多字词，还排在「有」前面。
+        // 混拼不受影响：`daoy` / `wokk` 的尾部残码永远切不干净，走不到这个分支。
+        if (splitSyllables(typed) != null) return emptyList()
         synchronized(abbrevCache) { abbrevCache[typed]?.let { return it } }
 
         // 索引一律在后台线程建好再用：建索引要遍历全部词库键，放在按键路径上会拖住 UI
