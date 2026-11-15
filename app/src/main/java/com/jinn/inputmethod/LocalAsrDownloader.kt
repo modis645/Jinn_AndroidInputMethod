@@ -61,6 +61,17 @@ internal object LocalAsrDownloader {
     var lastStage: String? = null
         private set
 
+    /**
+     * 当前进度 0..100（进程级，不分调用方）。
+     *
+     * 为什么要有：下载可能由 **IME 进程启动**那条路发起（不打开设置页也会装模型），
+     * 而设置页只是「看见有人在跑」。以前进度只通过回调发给发起者，设置页拿不到回调，
+     * 于是出现「按钮显示取消下载、进度永远是 0%」——用户看到的就是「显示在下载、其实没下载」。
+     */
+    @Volatile
+    var lastProgress: Int = 0
+        private set
+
     /** 下载日志文件：每次下载前清空，逐条追加 */
     private fun logFile(context: Context): File = File(context.filesDir, "local-asr-download.log")
 
@@ -85,6 +96,7 @@ internal object LocalAsrDownloader {
     /** 取消在途任务（幂等） */
     fun cancel() {
         cancelled = true
+        if (running) lastStage = "正在停止…"
         runCatching { connection?.disconnect() }
         connection = null
     }
@@ -109,9 +121,8 @@ internal object LocalAsrDownloader {
                 val t = File(unpack, LocalAsrModel.TOKENS_FILE)
                 if (m.isFile && m.length() > 0L && t.isFile && t.length() > 0L) {
                     val dir = LocalAsrModel.dir(context)
-                    dir.listFiles()?.forEach { it.delete() }
-                    if (m.renameTo(LocalAsrModel.modelFile(context)) &&
-                        t.renameTo(LocalAsrModel.tokensFile(context))
+                    if (placeFile(m, dir, LocalAsrModel.MODEL_FILE) &&
+                        placeFile(t, dir, LocalAsrModel.TOKENS_FILE)
                     ) {
                         Diagnostics.i("LocalAsr", "从缓存抢救出完整模型，避免重下")
                     }
@@ -131,6 +142,44 @@ internal object LocalAsrDownloader {
         File(context.cacheDir, LocalAsrModel.ARCHIVE_NAME).delete()
         Diagnostics.i("LocalAsr", "模型删除: hadFiles=$had")
         return had
+    }
+
+    /**
+     * 把一个已下好 / 已解好的临时件放进模型目录。
+     *
+     * 关键点（2026-11-17 真机反馈「解包失败：无法写入模型目录」）：临时件在 `cacheDir`（内部存储），
+     * 模型目录已改成**外部专属目录** `Android/data/<pkg>/files/local-asr` —— 两者不是一个分区，
+     * `renameTo` 一律返回 false。所以同分区仍走改名（原子、零拷贝），跨分区退化成「先复制成 .part
+     * 再在目标目录内改名」，写完核对字节数，任何一步失败都不留半截文件。
+     */
+    private fun placeFile(src: File, dir: File, name: String): Boolean {
+        if (!dir.isDirectory && !dir.mkdirs()) {
+            Diagnostics.w("LocalAsr", "模型目录创建失败: " + dir.absolutePath)
+            return false
+        }
+        val dst = File(dir, name)
+        if (src.parentFile?.absolutePath == dir.absolutePath && src.renameTo(dst)) return true
+        if (runCatching { src.renameTo(dst) }.getOrDefault(false)) return true
+        val part = File(dir, "$name.part")
+        return runCatching {
+            part.delete()
+            src.inputStream().use { input ->
+                part.outputStream().use { output -> input.copyTo(output, 1 shl 20) }
+            }
+            if (part.length() != src.length()) {
+                part.delete()
+                false
+            } else {
+                dst.delete()
+                if (part.renameTo(dst)) {
+                    src.delete()
+                    true
+                } else {
+                    part.delete()
+                    false
+                }
+            }
+        }.getOrDefault(false)
     }
 
     private fun open(url: String): HttpURLConnection {
@@ -180,7 +229,7 @@ internal object LocalAsrDownloader {
                 }
             }
             if (read < LocalAsrModel.VAD_MIN_BYTES) return false
-            tmp.renameTo(LocalAsrModel.vadFile(context))
+            placeFile(tmp, LocalAsrModel.dir(context), LocalAsrModel.VAD_FILE)
         } catch (t: Throwable) {
             log(context, "  VAD 异常 ${t.javaClass.simpleName}: ${t.message}")
             false
@@ -204,7 +253,9 @@ internal object LocalAsrDownloader {
         onStage: ((String) -> Unit)? = null,
     ) {
         if (isRunning()) {
-            onDone(false, "已有一个下载任务在跑")
+            // 已经有人在跑（例如 IME 启动时自己发起的那次）：不回调 onDone ——
+            // 回调会让界面把「正在跑」刷成「失败」，用户看到的就是「显示取消下载、其实没下载」。
+            Diagnostics.i("LocalAsr", "已有下载任务在跑，本次不重复发起")
             return
         }
         cancelled = false
@@ -218,6 +269,11 @@ internal object LocalAsrDownloader {
             val tmpDir = File(context.cacheDir, "local-asr-unpack")
             var ok = false
             var reason: String? = null
+            // 进度既回给发起者，也记进 lastProgress：设置页可能与发起者不是同一处
+            fun report(p: Int) {
+                lastProgress = p
+                runCatching { onProgress(p) }
+            }
             try {
                 archive.delete()
                 tmpDir.deleteRecursively()
@@ -266,7 +322,7 @@ internal object LocalAsrDownloader {
                                         output.write(buf, 0, n)
                                         got += n
                                         val pct = (got * PROGRESS_DOWNLOAD_DONE / total).toInt()
-                                        onProgress(pct.coerceIn(0, PROGRESS_DOWNLOAD_DONE))
+                                        report(pct.coerceIn(0, PROGRESS_DOWNLOAD_DONE))
                                     }
                                 }
                             }
@@ -296,7 +352,7 @@ internal object LocalAsrDownloader {
                             log(context, "  判定：sha256 不符，换下一个源")
                         }
                         archive.delete()
-                        onProgress(0)
+                        report(0)
                     }
                     if (cancelled) break
                 }
@@ -352,14 +408,22 @@ internal object LocalAsrDownloader {
                 }
 
                 if (reason == null) {
-                    // ── 3. 原子换入 ──
+                    // ── 3. 换入模型目录 ──
+                    // 临时件在 cacheDir（内部），模型目录在外部专属目录，跨分区时 renameTo 必失败，
+                    // 由 placeFile 退回复制（详见它的注释）。
                     val dir = LocalAsrModel.dir(context)
-                    dir.listFiles()?.forEach { it.delete() }
-                    if (!modelOut!!.renameTo(LocalAsrModel.modelFile(context)) ||
-                        !tokensOut!!.renameTo(LocalAsrModel.tokensFile(context))
-                    ) {
-                        reason = "解包失败：无法写入模型目录"
+                    dir.mkdirs()
+                    val modelOk = placeFile(modelOut!!, dir, LocalAsrModel.MODEL_FILE)
+                    val tokensOk = modelOk && placeFile(tokensOut!!, dir, LocalAsrModel.TOKENS_FILE)
+                    if (!modelOk || !tokensOk) {
+                        reason = "解包失败：无法写入模型目录（" + dir.absolutePath + "）"
                     } else {
+                        // 换入成功后再清掉这次没换的旧件（旧的 .part 残留等），不动刚写好的两件
+                        dir.listFiles()?.forEach { f ->
+                            if (f.name !in listOf(LocalAsrModel.MODEL_FILE, LocalAsrModel.TOKENS_FILE,
+                                    LocalAsrModel.VAD_FILE)
+                            ) runCatching { f.delete() }
+                        }
                         ok = true
                     }
                     // ── 4. VAD（可选件）：失败只降级，不算下载失败 ──
@@ -376,7 +440,7 @@ internal object LocalAsrDownloader {
             if (!ok) lastFailure = reason
             lastStage = null
             log(context, "结束 ok=$ok reason=${reason ?: "-"}")
-            onProgress(if (ok) 100 else 0)
+            report(if (ok) 100 else 0)
             Diagnostics.i("LocalAsr", "模型下载结束 ok=$ok reason=${reason ?: "-"}")
             onDone(ok, reason)
         }, "jinn-local-asr-download").apply { isDaemon = true }.start()
