@@ -1734,13 +1734,13 @@ class SettingsActivity : ComponentActivity() {
          * 「语音转为文字」入口按钮（2026-11-01：四块语音配置迁到 [VoiceSettingsActivity] 后，
          * 本页只留这一个入口，与「绑定悬浮键盘」同排；状态小字已删）。
          */
-        const val TEXT_VOICE_ENTRY = "语音转为文字"
+        const val TEXT_VOICE_ENTRY = "离线语音"
 
         /** 语音入口：本机离线后端 + 模型未下载 —— 把「差什么」写在按钮上，首启就能看见 */
-        const val TEXT_VOICE_ENTRY_LOCAL_MISSING = "语音转为文字（点这里下载离线模型）"
+        const val TEXT_VOICE_ENTRY_LOCAL_MISSING = "离线语音（点这里下载模型）"
 
         /** 语音入口：本机离线后端 + 模型已就绪 */
-        const val TEXT_VOICE_ENTRY_LOCAL_READY = "语音转为文字（离线模型已就绪）"
+        const val TEXT_VOICE_ENTRY_LOCAL_READY = "离线语音（模型已就绪）"
 
         /**
          * 最底部使用说明（六行，`\n` 分隔）。
