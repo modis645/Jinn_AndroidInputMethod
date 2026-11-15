@@ -661,6 +661,46 @@ object SelectionLedger {
         }.getOrElse { LedgerRead.Unavailable }
     }
 
+    /** 删除重写用的中间件后缀（与迁移 / 补首行的后缀不同，互不干扰） */
+    private const val DELETED_SUFFIX = ".purge"
+
+    /**
+     * 删除指定词的全部记录（用户 2026-11-15：「用户词库不能删除指定词」）。
+     *
+     * 台账是**追加式**的：删一个词必须整份重写。做法是读出全部流水 → 过滤掉这些词 → 逐行重新
+     * 加密 → 原子替换（走 [writeAtomicWithSync]，与迁移同一条落盘路径）。
+     *
+     * @return true = 已删除（含「本来就没有」）；false = 读写失败；null = 密钥不可用、解不开
+     */
+    fun deleteWords(context: Context, words: Set<String>): Boolean? {
+        if (words.isEmpty()) return true
+        val dir = context.filesDir
+        val file = File(dir, FILE_NAME)
+        if (!file.isFile) return true
+        val read = readAllIn(dir)
+        val picks = when (read) {
+            is LedgerRead.Ok -> read.picks
+            LedgerRead.Unavailable -> return null
+        }
+        val key = LedgerCrypto.dataKey(dir) ?: return null
+        val kept = picks.filterNot { it.first in words }
+        // 队列里还没落盘的行先写完，否则这次整份重写会把它们一起冲掉
+        flush()
+        return synchronized(migrateLock) {
+            runCatching {
+                val sb = StringBuilder(kept.size * 64 + 500)
+                sb.append(LedgerCrypto.HEADER).append('\n')
+                for ((word, pinyin) in kept) {
+                    val line = formatLine(word, pinyin) ?: continue
+                    sb.append(LedgerCrypto.encryptLine(line, key)).append('\n')
+                }
+                writeAtomicWithSync(file, sb.toString(), DELETED_SUFFIX)
+            }.onFailure {
+                Diagnostics.w(TAG, "台账删除重写失败: ${it.javaClass.simpleName}")
+            }.getOrDefault(false)
+        }
+    }
+
     /**
      * 逐行解密整份台账，拼回 [parse] 认的明文流水。
      *
