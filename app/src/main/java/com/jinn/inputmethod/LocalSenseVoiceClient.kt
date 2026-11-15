@@ -4,6 +4,10 @@ import com.k2fsa.sherpa.onnx.OfflineModelConfig
 import com.k2fsa.sherpa.onnx.OfflineRecognizer
 import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
 import com.k2fsa.sherpa.onnx.OfflineSenseVoiceModelConfig
+import com.k2fsa.sherpa.onnx.SileroVadModelConfig
+import com.k2fsa.sherpa.onnx.Vad
+import com.k2fsa.sherpa.onnx.VadModelConfig
+import java.io.File
 
 /**
  * 本机离线识别（sherpa-onnx + SenseVoice small int8）：**松手后整段解码**，不联网。
@@ -71,7 +75,17 @@ internal class LocalSenseVoiceClient(
         }
 
         val started = System.currentTimeMillis()
-        val text = synchronized(lock) {
+        // 长句先按静音切句：silero VAD 把整段切成若干句话，逐句解码再拼回去。
+        // 好处是每句都在 8 秒以内，模型不必把整段话挤进一个上下文窗口（长段最容易丢字/断句错），
+        // 顺带单句解码更快。VAD 模型缺失、切不出句子或任何一步抛异常，都退回整段解码 ——
+        // 语音可用性不能被一个可选件拖住。
+        val vadPath = LocalAsrModel.vadFile(prefs.context)
+        val segmented = if (vadPath.isFile && samples.size >= MIN_VAD_SAMPLES) {
+            splitByVad(recognizer, samples, vadPath)
+        } else {
+            null
+        }
+        val text = segmented ?: synchronized(lock) {
             val stream = recognizer.createStream()
             try {
                 stream.acceptWaveform(samples, SAMPLE_RATE)
@@ -84,10 +98,67 @@ internal class LocalSenseVoiceClient(
         Diagnostics.i(
             tag,
             "离线解码完成 音频=${samples.size / SAMPLE_RATE.toFloat()}s " +
+                "分句=${if (segmented == null) "整段" else "VAD"} " +
                 "耗时=${System.currentTimeMillis() - started}ms 字数=${text.length}",
         )
         return BatchOutcome.Ok(text.trim())
     }
+
+
+    /**
+     * silero VAD 分句 + 逐句解码。返回拼好的整段文本；切不出句子（全是静音 / 太短）
+     * 或任一步抛异常时返回 null，调用方退回整段解码。
+     *
+     * `maxSpeechDuration` 给到极大值：**只按静音切**，不硬切句子（硬切会把半句话剖开，
+     * 反倒多丢字）。`minSpeechDuration` 0.2 秒是防咳嗽/按键声成句的下限。
+     */
+    private fun splitByVad(recognizer: OfflineRecognizer, samples: FloatArray, vadPath: File): String? =
+        runCatching {
+            val vad = Vad(
+                config = VadModelConfig(
+                    sileroVadModelConfig = SileroVadModelConfig(
+                        model = vadPath.absolutePath,
+                        threshold = 0.5f,
+                        minSilenceDuration = 0.3f,
+                        minSpeechDuration = 0.2f,
+                        windowSize = 512,
+                        maxSpeechDuration = 1e9f,
+                    ),
+                    sampleRate = SAMPLE_RATE,
+                    numThreads = 1,
+                    provider = "cpu",
+                    debug = false,
+                ),
+            )
+            val builder = StringBuilder()
+            var pieces = 0
+            synchronized(lock) {
+                try {
+                    vad.acceptWaveform(samples)
+                    vad.flush()
+                    while (!vad.empty()) {
+                        val segment = vad.front()
+                        // 太短的片段（<0.2s）多半是噪声，交给模型只会得到一两个错字
+                        if (segment.samples.size >= SAMPLE_RATE / 5) {
+                            val stream = recognizer.createStream()
+                            try {
+                                stream.acceptWaveform(segment.samples, SAMPLE_RATE)
+                                recognizer.decode(stream)
+                                builder.append(recognizer.getResult(stream).text)
+                                pieces++
+                            } finally {
+                                stream.release()
+                            }
+                        }
+                        vad.pop()
+                    }
+                } finally {
+                    vad.release()
+                }
+            }
+            Diagnostics.i(tag, "VAD 分句: 音频=${samples.size / SAMPLE_RATE.toFloat()}s 句数=$pieces")
+            if (builder.isBlank()) null else builder.toString()
+        }.getOrNull()
 
     /** PCM16（小端）→ float32 归一化到 [-1,1]；逐采样 1/32768 换算，不做重采样（采集端已是 16k） */
     private fun pcm16ToFloat(pcm16: ByteArray): FloatArray {
@@ -110,6 +181,9 @@ internal class LocalSenseVoiceClient(
 
     private companion object {
         const val SAMPLE_RATE = 16_000
+
+        /** 低于这个长度（约 4 秒）不值得走 VAD：切出来的句子和整段解码差别不大 */
+        const val MIN_VAD_SAMPLES = 4 * SAMPLE_RATE
 
         /** 解码串行化（recognizer / stream 都非线程安全） */
         val lock = Any()
