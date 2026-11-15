@@ -2,6 +2,7 @@ package com.jinn.inputmethod
 
 import android.content.Context
 import java.io.File
+import java.security.MessageDigest
 
 /**
  * 离线语音识别的模型落点与就绪判定（sherpa-onnx + SenseVoice「快速整句」）。
@@ -23,40 +24,62 @@ internal object LocalAsrModel {
      * 没有它时长句整段解码，有它就按静音切开逐句解码再拼回去（见 LocalSenseVoiceClient）。
      */
     const val VAD_FILE = "silero_vad.onnx"
-    const val VAD_URL =
+
+    /** VAD 的官方直链（`asr-models` release 下的单个文件） */
+    private const val VAD_PATH =
         "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx"
 
+    /** VAD 直链大小（官方 643,854 字节）；小于它的响应按「不是这个文件」处理 */
+    const val VAD_MIN_BYTES = 100_000L
+
     /**
-     * 国内可达的下载地址清单（按顺序试，第一条通就用第一条）。
+     * VAD 的下载顺序：**官方直连优先**，加速前缀只作兜底。
      *
-     * 直连 github.com 在部分网络下完全不通（用户 2026-11-15 反馈「语音模型下载的地址连接不上」），
-     * 所以在官方地址后面挂几个公共加速前缀：同一个文件，只是换了出口。
+     * 2026-11-15 对照沙鸥（msime）确认：同一台手机上官方直连是通的，先试代理反而会被
+     * 代理回的网页/超时拖住，整体表现成「连不上」。代理只在前面的官方源失败时才用。
      */
-    private const val VAD_PATH = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx"
     val VAD_URLS: List<String> = listOf(
+        VAD_PATH,
         "https://ghfast.top/$VAD_PATH",
         "https://ghproxy.net/$VAD_PATH",
         "https://hub.gitmirror.com/$VAD_PATH",
-        VAD_URL,
     )
+
     const val MODEL_FILE = "model.int8.onnx"
     const val TOKENS_FILE = "tokens.txt"
 
-    /** SenseVoice 官方打包（tar.bz2）：下载后解出上面两件文件，压缩包本身不保留 */
-    const val ARCHIVE_URL =
-        "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/" +
-            "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09.tar.bz2"
-    const val ARCHIVE_NAME = "sense-voice-small.tar.bz2"
-
-    /** 模型压缩包的下载地址清单（同 [VAD_URLS]，官方地址 + 公共加速前缀） */
+    /**
+     * 归档：SenseVoice int8 2024-07-17（163,002,883 字节）。
+     *
+     * 为什么用 2024-07-17 而不是 2025-09-09：沙鸥（msime）在真机上跑的一直是这个包，
+     * 大小与 sha256 都已实测过（下方常量），解出来的成员名也确定是
+     * `model.int8.onnx` + `tokens.txt`。2025-09-09 虽然存在，但没在真机上验过，
+     * 一旦成员名或结构有变，就会表现成「下载完了却说解包失败」。先对齐已知可用的那一版。
+     */
     private const val ARCHIVE_PATH =
         "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/" +
-            "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09.tar.bz2"
+            "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2"
+
+    /** 归档的官方字节数与摘要（用于「代理返回网页 / 截断」的判定） */
+    const val ARCHIVE_SIZE = 163_002_883L
+    const val ARCHIVE_SHA256 = "7d1efa2138a65b0b488df37f8b89e3d91a60676e416f515b952358d83dfd347e"
+
+    /** 低于这个字节数一律判为「拿到的不是模型」（留 5% 余量给不同 CDN 的等同文件） */
+    const val ARCHIVE_MIN_BYTES = (ARCHIVE_SIZE * 95 / 100)
+
+    const val ARCHIVE_NAME = "sense-voice-small.tar.bz2"
+
+    /**
+     * 归档的下载顺序：**官方直连优先，加速前缀兜底**（理由同 [VAD_URLS]）。
+     *
+     * 之前把三个公共加速站放在最前，结果代理常回「200 + 一段 HTML 错误页」，下载线程
+     * 见 got>0 就当成功，解包时才报「归档里找不到模型」—— 用户看到的是「下载无效」。
+     */
     val ARCHIVE_URLS: List<String> = listOf(
+        ARCHIVE_PATH,
         "https://ghfast.top/$ARCHIVE_PATH",
         "https://ghproxy.net/$ARCHIVE_PATH",
         "https://hub.gitmirror.com/$ARCHIVE_PATH",
-        ARCHIVE_URL,
     )
 
     fun dir(context: Context): File = File(context.filesDir, DIR_NAME).apply { mkdirs() }
@@ -68,7 +91,7 @@ internal object LocalAsrModel {
     fun vadFile(context: Context): File = File(dir(context), VAD_FILE)
 
     /** VAD 是可选件：缺了降级为「整段解码」，所以不参与 [isReady] 判定 */
-    fun hasVad(context: Context): Boolean = vadFile(context).let { it.isFile && it.length() > 0 }
+    fun hasVad(context: Context): Boolean = vadFile(context).let { it.isFile && it.length() > VAD_MIN_BYTES }
 
     /** 两件文件都在才算就绪（只看存在性，完整性由下载端的 sha256 / 大小校验保证） */
     fun isReady(context: Context): Boolean =
@@ -77,6 +100,28 @@ internal object LocalAsrModel {
 
     /** 已占用的字节数（设置页「存储占用」与删除入口用） */
     fun usedBytes(context: Context): Long = dir(context).listFiles()?.sumOf { it.length() } ?: 0L
+
+    /**
+     * 归档完整性校验：大小落在官方字节数的 95% 以上，且 sha256 完全一致才放行。
+     *
+     * 只大小的约定挡不住「大小碰巧接近的别的东西」，只 sha256 又要对着一个被截断的
+     * 文件读 163 MB；先看大小能省掉绝大多数无效源的摘要计算。
+     */
+    fun verifyArchive(file: File): Boolean {
+        val size = file.length()
+        if (size < ARCHIVE_MIN_BYTES) return false
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buf = ByteArray(256 * 1024)
+            while (true) {
+                val n = input.read(buf)
+                if (n <= 0) break
+                digest.update(buf, 0, n)
+            }
+        }
+        val hex = buildString { digest.digest().forEach { append("%02x".format(it)) } }
+        return hex.equals(ARCHIVE_SHA256, ignoreCase = true)
+    }
 
     /**
      * 状态条上直接给用户看的一句话：就绪返回 null；缺文件返回「缺什么 + 该怎么办」。
