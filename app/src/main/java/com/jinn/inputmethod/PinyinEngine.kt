@@ -2,6 +2,7 @@ package com.jinn.inputmethod
 
 import android.content.Context
 import java.nio.charset.StandardCharsets
+import java.util.LinkedHashMap
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 
@@ -34,6 +35,21 @@ object PinyinEngine {
      */
     private const val MAX_CHARS = 60
     private const val MAX_PHRASES = 12
+
+    /** 简拼 / 混拼：一次解析最多产出的候选词数（首屏够用即可，不与精确词抢位置） */
+    private const val ABBREV_MAX_WORDS = 24
+
+    /** 简拼 / 混拼：后缀最多几个首字母（超过这个长度基本是乱敲） */
+    private const val ABBREV_MAX_SUFFIX = 4
+
+    /** 简拼 / 混拼：整串输入的上限（再长就不当成简拼猜了） */
+    private const val ABBREV_MAX_LENGTH = 8
+
+    /** 每个前缀区间最多扫多少个词库键（简拼没有锚点时要扫多个音节区间，必须设上限） */
+    private const val ABBREV_KEY_SCAN_CAP = 320
+
+    /** 汉语拼音最长音节（zhuang / shuang），DP 里枚举音节长度用 */
+    private const val SYLLABLE_MAX_LEN = 6
 
     /**
      * 用户手动插入的音节分隔符（西文单引号）。
@@ -2186,6 +2202,135 @@ object PinyinEngine {
         val isEmpty: Boolean get() = candidates.isEmpty()
     }
 
+    // ── 简拼 / 混拼 ────────────────────────────────────────
+
+    /**
+     * 简拼 / 混拼解析结果的缓存。
+     *
+     * 这条路径比精确词贵得多（要在一个前缀区间里逐键试切分），而用户是在同一个输入串上
+     * 反复回看候选的（删一个字母再打回来、点拼音条改光标都会重查），所以必须缓存。
+     * accessOrder = true + 上限 32：只留最近用到的几串，删字母时连按几下也不会把缓存冲光。
+     */
+    private val abbrevCache = object : LinkedHashMap<String, List<Pair<String, Int>>>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<Pair<String, Int>>>?): Boolean =
+            size > 32
+    }
+
+    /**
+     * 「全拼前缀 + 简拼后缀」→ 候选词（词 → 该词音节数）。
+     *
+     * 解决的是两类输入（用户 2026-11-15：「简拼模式没有候选词」「wokk 出不来字」）：
+     *  - **纯简拼** `nh` → 你好、`whsh` → 五湖四海：每个字母各代表一个音节的首字母；
+     *  - **混拼** `wokk` → 我看看、`nih` → 你好：前面打完整音节，后面只打首字母。
+     * 词库是按「完整音节拼成的键」索引的，所以简拼在旧实现里**一条候选都没有** ——
+     * 不是排序差，是根本没查。这里补的就是这一步：拿前缀当锚点扫键，剩下那段用 DP
+     * 验「能不能切成正好这么多个音节、且每节首字母对得上」。
+     *
+     * 排序：前缀越长越先（越接近用户真打出来的东西），同一前缀内沿用词库原序 + 用户词频。
+     * 产出一律追加在**精确词之后、单字之前**，不会顶掉按完整拼音查出来的候选。
+     */
+    private fun abbreviationCandidates(typed: String): List<Pair<String, Int>> {
+        if (typed.length !in 2..ABBREV_MAX_LENGTH) return emptyList()
+        if (typed.any { it !in 'a'..'z' }) return emptyList()
+        synchronized(abbrevCache) { abbrevCache[typed]?.let { return it } }
+
+        val indexes = baseAndOptionalIndexes()
+        if (indexes.isEmpty()) return emptyList()
+
+        val out = ArrayList<Pair<String, Int>>(ABBREV_MAX_WORDS)
+        val seen = HashSet<String>(ABBREV_MAX_WORDS * 2)
+
+        // 一个命中的键 → 词；词表按用户词频重排后取前 MAX_PHRASES（与精确词同口径）
+        fun collect(key: String, syllables: Int) {
+            if (out.size >= ABBREV_MAX_WORDS) return
+            val found = phrasesFor(key) ?: return
+            val ranked = UserFrequency.rank(found) { toSimplified(it) }
+            for (w in displayTake(ranked.asList(), MAX_PHRASES)) {
+                if (out.size >= ABBREV_MAX_WORDS) return
+                if (!seen.add(w)) continue
+                out.add(w to syllables)
+            }
+        }
+
+        // 扫一个锚点前缀区间，逐键验后缀首字母；返回是否还要继续
+        fun scan(anchorPrefix: String, skipLetters: Int, suffix: String, syllablesSoFar: Int) {
+            if (out.size >= ABBREV_MAX_WORDS) return
+            for (idx in indexes) {
+                var scanned = 0
+                idx.forEachRangeWithPrefix(anchorPrefix) { keyIndex, _, _, _ ->
+                    if (out.size >= ABBREV_MAX_WORDS || scanned >= ABBREV_KEY_SCAN_CAP) {
+                        return@forEachRangeWithPrefix false
+                    }
+                    scanned++
+                    val key = idx.keyAt(keyIndex) ?: return@forEachRangeWithPrefix true
+                    if (key.length <= skipLetters) return@forEachRangeWithPrefix true
+                    val matched = syllableCountMatching(key, skipLetters, suffix)
+                    if (matched > 0) collect(key, syllablesSoFar + matched)
+                    true
+                }
+            }
+        }
+
+        // ① 混拼：前缀取自动切分里**已完整**的音节边界（`wokk` → 前缀 `wo`，后缀 `kk`）
+        val (segSyllables, partial) = segment(typed)
+        var letters = 0
+        for ((i, syl) in segSyllables.withIndex()) {
+            letters += syl.length
+            // 末段才有残码；残码本身就说明「剩下这几个字母不是完整音节」，正是简拼后缀
+            val suffix = typed.substring(letters)
+            if (suffix.length !in 1..ABBREV_MAX_SUFFIX) continue
+            val syllablesSoFar = i + 1
+            scan(typed.substring(0, letters), letters, suffix, syllablesSoFar)
+        }
+        // ② 纯简拼：`nh` 这类切不出完整音节的输入，按「首字母」解释
+        val pureInitials = partial.isNotEmpty() || segSyllables.all { it.length == 1 }
+        if (pureInitials) {
+            val initials = typed
+            var tried = 0
+            for (syl in validSyllables) {
+                if (syl[0] != initials[0]) continue
+                tried++
+                scan(syl, 0, initials, 0)
+                if (out.size >= ABBREV_MAX_WORDS) break
+            }
+            Diagnostics.v(TAG, "简拼锚点: $tried 个音节区间，命中 ${out.size} 条")
+        }
+
+        val result = if (out.isEmpty()) emptyList() else out.toList()
+        synchronized(abbrevCache) { abbrevCache[typed] = result }
+        return result
+    }
+
+    /**
+     * 从 [key] 的第 [skipLetters] 个字母起，能否切成正好 [initials.length] 个合法音节、
+     * 且第 j 个音节的首字母等于 `initials[j]`。能则返回音节数，不能返回 -1。
+     *
+     * 用 DP 而不是贪心：`xian` 既可切成 `xian` 也可切成 `xi`+`an`，
+     * 贪心只留最长音节，会把 `xi'an` 这种合法的简拼组合误判成不匹配。
+     */
+    private fun syllableCountMatching(key: String, skipLetters: Int, initials: String): Int {
+        if (initials.isEmpty() || skipLetters >= key.length) return -1
+        val rest = if (skipLetters == 0) key else key.substring(skipLetters)
+        val n = rest.length
+        val m = initials.length
+        // dp[j][p]：前 j 个音节吃完 rest 的前 p 个字母
+        val dp = Array(m + 1) { BooleanArray(n + 1) }
+        dp[0][0] = true
+        for (j in 0 until m) {
+            for (pos in 0 until n) {
+                if (!dp[j][pos]) continue
+                if (rest[pos] != initials[j]) continue
+                val maxLen = minOf(SYLLABLE_MAX_LEN, n - pos)
+                for (len in 1..maxLen) {
+                    if (!validSyllables.contains(rest.substring(pos, pos + len))) continue
+                    if (j == m - 1 && pos + len != n) continue   // 末音节必须刚好吃完
+                    dp[j + 1][pos + len] = true
+                }
+            }
+        }
+        return if (dp[m][n]) m else -1
+    }
+
     /**
      * 查询拼音串对应的候选。
      * @param input 全拼或双拼转换后的拼音串（小写字母，无空格）
@@ -2263,6 +2408,10 @@ object PinyinEngine {
                     noteCandidateKeys(shown, k2)
                 }
             }
+        }
+        // 2a. 简拼 / 混拼：精确词之后、单字之前（简拼不补这一层，纯简拼就一条候选都出不来）
+        for ((word, sylCount) in abbreviationCandidates(typed)) {
+            if (words.add(word)) syllableCounts[word] = sylCount
         }
         val chars = LinkedHashSet<String>(cap)
         for (syl in syllables) {
