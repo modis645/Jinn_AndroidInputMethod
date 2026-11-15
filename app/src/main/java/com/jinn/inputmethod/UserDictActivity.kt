@@ -1330,9 +1330,9 @@ class UserDictActivity : ComponentActivity() {
         const val TEXT_IMPORT_PENDING = "已排入 %d 条，尚未全部写完，稍后可在列表确认"
 
         const val TEXT_DELETE_TITLE = "删除这个词"
-    const val TEXT_DELETE_BODY = "把「%1$s」的全部 %2$d 次记录从用户词库删掉。\n删除不可恢复，词库之外的数据不受影响。"
+    const val TEXT_DELETE_BODY = "把「%s」的全部 %d 次记录从用户词库删掉。\n删除不可恢复，词库之外的数据不受影响。"
     const val TEXT_DELETE_OK = "删除"
-    const val TEXT_DELETE_OK_TOAST = "已删除「%1$s」"
+    const val TEXT_DELETE_OK_TOAST = "已删除「%s」"
     const val TEXT_DELETE_FAIL = "删除失败（文件可能被占用）"
     const val TEXT_DELETE_UNREADABLE = "台账解不开，暂时不能删除"
     const val TEXT_ENABLE_TITLE = "开启用户词库"
