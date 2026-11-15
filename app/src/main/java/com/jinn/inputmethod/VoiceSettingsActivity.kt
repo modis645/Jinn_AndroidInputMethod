@@ -13,6 +13,7 @@ import android.text.Editable
 import android.text.TextUtils
 import android.text.TextWatcher
 import android.text.method.PasswordTransformationMethod
+import java.io.File
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -816,7 +817,8 @@ class VoiceSettingsActivity : ComponentActivity() {
                 val vad = if (LocalAsrModel.hasVad(this)) "分句模型已就绪" else "分句模型缺失（长句整段识别，不影响使用）"
                 textLocalAsrStatus.text =
                     "模型已就绪（占用 ${used / (1024 * 1024)} MB）\n$vad\n" +
-                        "存放在应用数据目录，清理缓存不会删；只有卸载或点「删除模型」才会消失"
+                        "存放在应用数据目录，清理缓存不会删；只有卸载或点「删除模型」才会消失\n" +
+                        storageSelfCheckLine()
                 progressLocalAsr.visibility = View.GONE
                 btnLocalAsrDownload.text = TEXT_LOCAL_ASR_DOWNLOAD
                 btnLocalAsrDelete.visibility = View.VISIBLE
@@ -846,12 +848,38 @@ class VoiceSettingsActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * 存储自检行：模型目录的真实路径 + cache 里下载临时件的真实大小。
+     *
+     * 用户反馈「装完模型后 用户数据 248M、缓存 240M，清缓存后用户数据只剩 7M，再次打开又变回来」——
+     * 系统「应用信息」的两个笼统数字说不清是哪个目录被算进了缓存。这一行让 App 自己报出事实：
+     * 模型在 filesDir 多少、cacheDir 还剩多少，有残留就能一眼看见。
+     */
+    private fun storageSelfCheckLine(): String {
+        val modelDir = LocalAsrModel.dir(this)
+        val modelBytes = modelDir.listFiles()?.sumOf { it.length() } ?: 0L
+        val junk = runCatching {
+            val names = listOf(LocalAsrModel.ARCHIVE_NAME, "vad-download.onnx", "local-asr-unpack")
+            names.sumOf { n ->
+                val f = File(cacheDir, n)
+                if (!f.exists()) 0L
+                else if (f.isDirectory) f.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+                else f.length()
+            }
+        }.getOrDefault(0L)
+        val m = modelBytes / (1024 * 1024)
+        val j = junk / (1024 * 1024)
+        return "模型目录 files/${
+            modelDir.name
+        }（$m MB）\n缓存临时件 ${if (j == 0L) "已清空" else "残留 $j MB"}"
+    }
+
     /** 下载按钮：未就绪 = 开下；下载中 = 取消 */
     private fun onLocalAsrDownloadClicked() {
         if (LocalAsrDownloader.isRunning()) {
             LocalAsrDownloader.log(this, "用户点了取消")
             LocalAsrDownloader.cancel()
-        refreshLocalAsrStatus(0)
+            refreshLocalAsrStatus(0)
             return
         }
         // 先在本帧把「已开始」写到界面上：网络请求是异步的，之前要等后台线程回调，
