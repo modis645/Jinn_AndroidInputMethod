@@ -45,10 +45,10 @@ import java.lang.ref.WeakReference
  *
  * 两种模式通过键盘上的「键盘 / 语音」键互相切换，互不干扰。
  */
-class JinnIme : InputMethodService()
+class JinnIme : InputMethodService() {
 
     /** 崩溃采集只挂一次（服务会被系统重复创建） */
-    private var crashCaptureInstalled = false {
+    private var crashCaptureInstalled = false
 
     private enum class Mode { NONE, HOLD, TOGGLE }
 
