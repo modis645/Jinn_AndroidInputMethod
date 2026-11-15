@@ -272,6 +272,29 @@ class PinyinKeyboardView @JvmOverloads constructor(
     @Volatile
     private var suppressLearning = false
 
+    /**
+     * 逐字上屏的自造词累积（2026-11-15）。
+     *
+     * 背景：用户全拼打 `liuzhiwu` 想要「刘志武」，但词库里没有人名，候选里只有三个单字，
+     * 只能一个字一次地上屏 —— 而台账只在「显式选中一个词」时收词，单字又都是字典里已有的词
+     * （[PinyinEngine.isKnownWord] 为真），于是这个名字一个字都进不了词库。
+     *
+     * 规则（对齐搜狗/讯飞的「自造词」）：
+     *  - 连续上屏**单字**且间隔不超过 [RUN_GAP_MS]，把它们拼起来当成一个词（2~4 字）；
+     *  - 只要中间选了一个多字词、停顿超过 [RUN_GAP_MS]、或收起键盘，当前这一串就结算；
+     *  - 结算时词库没有这个词才收（[recordLedgerIfNew] 已自带这层过滤），
+     *    字数不齐 / 读音对不上的按「不收」处理，宁可漏收也不写脏数据。
+     */
+    private val runWord = StringBuilder()
+    private val runPinyin = StringBuilder()
+    private var runLastAt = 0L
+
+    /** 两次单字上屏之间超过这个间隔就不算同一个词（打字停顿 = 两个词） */
+    private val RUN_GAP_MS = 6000L
+
+    /** 自造词上限：再长就不是「词」，把整句话收进词库只会污染候选 */
+    private val RUN_MAX_CHARS = 4
+
     /** 符号层 / 数字层 / 字母层 */
     private var layer = LAYER_LETTER
 
@@ -2016,6 +2039,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 选择台账：只追加「词 + 读音」，一行一次（与词频表分开，互不覆盖）。
         // 词按**简体**归一键（与 UserFrequency.rememberChoice 同口径）：繁体模式下同一词不会繁简两份计数
         recordLedgerIfNew(word, pinyin)
+        // 逐字上屏的自造词：单字连打时拼起来，凑够一个名字/术语就收词（见 runWord 说明）
+        accumulateRun(word, pinyin)
         PinyinEngine.rememberChoice(word)
     }
 
@@ -2029,6 +2054,47 @@ class PinyinKeyboardView @JvmOverloads constructor(
         if (word.isEmpty()) return
         if (PinyinEngine.isKnownWord(word)) return
         SelectionLedger.record(PinyinEngine.toSimplified(word), pinyin)
+        // 立刻进候选池（不必等下次启动）：自造词当场就能用，否则用户「造了词还是打不出来」
+        PinyinEngine.noteUserWord(word, pinyin)
+    }
+
+    /**
+     * 累积「逐字上屏」的自造词（规则见 [runWord]）。
+     *
+     * 多字词一出现就结算并清空：用户选了一个现成的词，前面积累的单字就不再是同一个词。
+     */
+    private fun accumulateRun(word: String, pinyin: String) {
+        val now = System.currentTimeMillis()
+        if (word.length != 1) {
+            flushRun()
+            return
+        }
+        if (runWord.isNotEmpty() && now - runLastAt > RUN_GAP_MS) flushRun()
+        runWord.append(word)
+        if (pinyin.isNotEmpty()) {
+            if (runPinyin.isEmpty()) runPinyin.append(pinyin) else runPinyin.append(' ').append(pinyin)
+        }
+        runLastAt = now
+        if (runWord.length >= RUN_MAX_CHARS) flushRun()
+    }
+
+    /**
+     * 结算当前这一串单字：够 2 字、词库没有、读音段数与字数对齐才收。
+     *
+     * 幂等且无条件清空 —— 调用方可能在任何时机触发（停顿 / 多字词 / 收键盘），
+     * 不能因为「这次没收成」就让缓冲里留着半截串，那会串到下一个词。
+     */
+    private fun flushRun() {
+        if (runWord.isEmpty()) return
+        val w = runWord.toString()
+        val p = runPinyin.toString()
+        runWord.setLength(0)
+        runPinyin.setLength(0)
+        runLastAt = 0L
+        if (w.length < 2 || w.length > RUN_MAX_CHARS) return
+        if (p.isEmpty()) return
+        if (p.split(' ').size != w.length) return
+        recordLedgerIfNew(w, p)
     }
 
     /** 设置输入方案（全拼 / 八种双拼）与初始中英文状态 */
@@ -6256,6 +6322,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 按空格则会把上一次的候选词直接塞进搜索框。
      */
     private fun clearComposingState() {
+        flushRun()
         if (composing.isEmpty() && lastCandidates.isEmpty() &&
             lastPredictions.isEmpty() && lastCommittedWord.isEmpty()
         ) return
