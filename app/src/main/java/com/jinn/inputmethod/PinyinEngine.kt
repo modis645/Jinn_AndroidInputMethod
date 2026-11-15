@@ -2563,16 +2563,6 @@ object PinyinEngine {
             allSyllables
         }
 
-        // 1b. 用户自造词：整串拼音精确命中就最先入池。
-        // 位置必须在词库词之前 —— 用户特意造出来的词，优先级按定义高于内置词；
-        // 放在单字之后则会被首屏单字挤掉（用户要的是「打 liuzhiwu 就看见刘志武」）。
-        val userHits = userWords[raw]
-        if (!userHits.isNullOrEmpty()) {
-            for (uw in userHits) {
-                putUserWord(words, syllableCounts, uw.word, uw.syllables)
-            }
-        }
-
         // 2. 从最长音节数逐级递减：先整词，再逐级到单字（对齐 AOSP while(lma_size>0)）
         //    词语与单字分成两个集合：模糊音的词要插在两者之间（见 2b）
         // 前缀键增量拼装（MEM-19）：从最长前缀起**逐级削掉尾部**得到下一级，不再每级
@@ -2588,6 +2578,16 @@ object PinyinEngine {
         val words = LinkedHashSet<String>(cap)
         // 每个候选来自几个音节（用于最后「同音节数优先」分组）：长键先入，故先登记者即最长键
         val syllableCounts = HashMap<String, Int>(cap * 4 / 3 + 1)
+        // 1b. 用户自造词：整串拼音精确命中就最先入池。
+        // 位置必须在词库词之前 —— 用户特意造出来的词，优先级按定义高于内置词；
+        // 放在单字之后则会被首屏单字挤掉（用户要的是「打 liuzhiwu 就看见刘志武」）。
+        val userHits = userWords[raw]
+        if (!userHits.isNullOrEmpty()) {
+            for (uw in userHits) {
+                putUserWord(words, syllableCounts, uw.word, uw.syllables)
+            }
+        }
+
         for (k in syllables.size downTo 1) {
             val key = keyBuf.toString()     // 本轮前缀快照（Map / 二分查找要用真 String）
             keyBuf.setLength(keyBuf.length - syllables[k - 1].length)   // 削掉本级：下一轮即更短的前缀
