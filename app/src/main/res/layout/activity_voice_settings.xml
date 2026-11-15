@@ -147,6 +147,15 @@
                         android:layout_marginStart="8dp"
                         android:layout_weight="1" />
                 </LinearLayout>
+
+                <!-- 模型导入的兜底入口（2026-11-15）：直连下载失败时，用户可以自己在电脑上
+                     下好 model.int8.onnx / tokens.txt（可选 silero_vad.onnx），拷到手机再从这里导入。 -->
+                <Button
+                    style="@style/SettingsButton"
+                    android:id="@+id/btn_local_asr_import"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:layout_marginTop="8dp" />
             </LinearLayout>
 
             <!-- 授权麦克风：状态 + 单个授权按钮（随总开关整体隐藏） -->
