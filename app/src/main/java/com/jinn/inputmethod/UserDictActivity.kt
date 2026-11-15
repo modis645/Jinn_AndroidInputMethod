@@ -474,6 +474,9 @@ class UserDictActivity : ComponentActivity() {
                 when (ok) {
                     true -> {
                         toast(String.format(Locale.US, TEXT_DELETE_OK_TOAST, word))
+                        // 删词后要让**候选池**立刻跟着变：自造词索引在引擎里是内存副本，
+                        // 只刷页面不刷它，用户删掉的词还能被打出来（2026-11-15 接台账进查询后补的）
+                        runCatching { PinyinEngine.loadUserWords(applicationContext) }
                         loadAsync()
                     }
                     false -> toast(TEXT_DELETE_FAIL)
@@ -1007,7 +1010,9 @@ class UserDictActivity : ComponentActivity() {
                     .setNegativeButton(android.R.string.cancel, null)
                     .setPositiveButton(android.R.string.ok) { _, _ ->
                         io.execute {
-                            // appendAll 现在会如实回报「有没有排进写入」（功能被关掉 / 未绑定 / 无有效行）
+                            // 导入同样要刷新候选池：否则新导入的词要等下次启动才参与输入
+        runCatching { PinyinEngine.loadUserWords(applicationContext) }
+        // appendAll 现在会如实回报「有没有排进写入」（功能被关掉 / 未绑定 / 无有效行）
                             val queued = SelectionLedger.appendAll(picked)
                             val flushed = SelectionLedger.flush()
                             uiToast(
