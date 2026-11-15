@@ -37,10 +37,10 @@ import kotlin.math.roundToInt
  * 声明写在后半段时构造函数读到的是 null —— 2026-11-15 真机崩溃栈正是
  * `Paint.measureText: text cannot be null`（buildTextIcon 收到 null 标签）。
  */
-private const val TEXT_VOICE_KEY_IDLE = "语音"
+private const val TEXT_VOICE_KEY_IDLE = "长语音"
 private const val TEXT_VOICE_KEY_LISTEN = "聆听中"
 private const val TEXT_VOICE_KEY_CANCEL = "松开取消"
-/** 连续录音中的键面动词：`结束 0:07`（点一下就是结束） */
+/** 连续录音中的键面动词：`结束`（点一下就是结束；不显示秒表，键面只有两行小字的空间） */
 private const val TEXT_VOICE_KEY_STOP = "结束"
 private const val TEXT_SHIFT_SPLIT = "分词"
 private const val TEXT_SHIFT_UPPER = "大写"
@@ -898,14 +898,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 视图靠 [setVoiceToggleState] 被通报，不自己猜（录音可能被外部终止，视图也可能重建）。
      */
     private var voiceToggleActive = false
-    private var voiceToggleStartedAt = 0L
-    private val voiceToggleTicker = object : Runnable {
-        override fun run() {
-            if (!voiceToggleActive) return
-            updateSpaceHint()
-            postDelayed(this, 1000L)
-        }
-    }
 
     private val btnBackspace: View
     private val btnEnter: View
@@ -5024,7 +5016,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 长语音键：录音中键面写「聆听中」，上滑到取消区写「松开取消」。
         // 用户看不到录音过程，只能靠键面知道「还在收」还是「要取消」（2026-11-16 需求）。
         btnVoiceLabel?.text = when {
-            voiceToggleActive -> voiceToggleLabel()
+            voiceToggleActive -> TEXT_VOICE_KEY_STOP
             !voiceHoldActive -> TEXT_VOICE_KEY_IDLE
             voiceHoldCancelArmed -> TEXT_VOICE_KEY_CANCEL
             else -> TEXT_VOICE_KEY_LISTEN
@@ -5097,29 +5089,16 @@ class PinyinKeyboardView @JvmOverloads constructor(
             return
         }
         voiceToggleActive = active
-        removeCallbacks(voiceToggleTicker)
-        if (active) {
-            voiceToggleStartedAt = android.os.SystemClock.uptimeMillis()
-            post(voiceToggleTicker)
-        }
         updateSpaceHint()
     }
 
     /** 连续录音键面复位（`stopRecording` 侧调用；幂等、不回调 Listener） */
     fun cancelVoiceToggle() = setVoiceToggleState(false)
 
-    /**
-     * 连续录音的键面文案：`结束 0:07`。
-     *
-     * 只显示**已录时长**、不做倒计时 —— 用户要的信息是「还在录、录了多久」，倒计时只会让人紧张；
-     * 到点自动收尾由 IME 负责（见 `JinnIme.autoStopDelayMs`）。手写补零，避免 `Locale` 依赖。
-     */
-    private fun voiceToggleLabel(): String {
-        val sec = ((android.os.SystemClock.uptimeMillis() - voiceToggleStartedAt) / 1000L).coerceAtLeast(0L)
-        val mm = sec / 60L
-        val ss = sec % 60L
-        return TEXT_VOICE_KEY_STOP + " " + mm + ":" + (if (ss < 10L) "0$ss" else "$ss")
-    }
+    // 键面只写「结束」两个字：这个键高度只有一行小字 + 一条电平条的空间，
+    // 秒表（`结束 0:07`）在那个宽度里会被压成 8sp，用户反馈「字很小」。录音时长不再上键面，
+    // 「还在录」的实证交给电平条（它一直在动），「录了多久」到点自动收尾时没有意义。
+
 
     /**
      * 结束空格长按录音：复位键面小字后通知 IME 收尾（提交或丢弃）。
