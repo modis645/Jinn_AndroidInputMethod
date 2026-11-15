@@ -331,7 +331,7 @@ class Prefs(private val appContext: Context) {
      * 键盘下次弹出即按新设置渲染，不必重启输入法。
      */
     var showKeyHint: Boolean
-        get() = boolOr(KEY_SHOW_KEY_HINT, true)
+        get() = boolOr(KEY_SHOW_KEY_HINT, false)
         set(value) = sp.edit { putBoolean(KEY_SHOW_KEY_HINT, value) }
 
     /**
@@ -341,7 +341,7 @@ class Prefs(private val appContext: Context) {
      * 与 [showKeyHint] 一样，键盘下次弹出即按新设置渲染。
      */
     var showQuanpin: Boolean
-        get() = boolOr(KEY_SHOW_QUANPIN, true)
+        get() = boolOr(KEY_SHOW_QUANPIN, false)
         set(value) = sp.edit { putBoolean(KEY_SHOW_QUANPIN, value) }
 
     /**
@@ -660,7 +660,7 @@ class Prefs(private val appContext: Context) {
      * 归一在 [CandidateText.clampPinyinSp]（12~30sp、1sp 对齐）。读写两侧同一套边界。
      */
     var pinyinTextSp: Float
-        get() = CandidateText.clampPinyinSp(floatOr(KEY_PINYIN_TEXT_SP, CandidateText.PINYIN_DEFAULT_AUTO))
+        get() = CandidateText.clampPinyinSp(floatOr(KEY_PINYIN_TEXT_SP, CandidateText.DEFAULT_PINYIN_SP))
         set(value) = sp.edit { putFloat(KEY_PINYIN_TEXT_SP, CandidateText.clampPinyinSp(value)) }
 
     /**
@@ -786,7 +786,8 @@ class Prefs(private val appContext: Context) {
     var skinLightId: String
         get() {
             ensureSkinSlotsMigrated()
-            val raw = strOr(KEY_SKIN_LIGHT, null) ?: return KeyboardSkins.INITIAL_LIGHT_ID
+            // 默认外观（用户 2026-11-15 截图指定）：亮色档「原白」
+        val raw = strOr(KEY_SKIN_LIGHT, null) ?: return KeyboardSkins.LEGACY_LIGHT_ID
             return KeyboardSkins.byId(raw, SkinTone.LIGHT).id
         }
         set(value) = sp.edit { putString(KEY_SKIN_LIGHT, KeyboardSkins.byId(value, SkinTone.LIGHT).id) }
@@ -798,7 +799,8 @@ class Prefs(private val appContext: Context) {
     var skinDarkId: String
         get() {
             ensureSkinSlotsMigrated()
-            val raw = strOr(KEY_SKIN_DARK, null) ?: return KeyboardSkins.INITIAL_DARK_ID
+            // 默认外观（用户 2026-11-15 截图指定）：暗色档「夜空」
+        val raw = strOr(KEY_SKIN_DARK, null) ?: "night"
             return KeyboardSkins.byId(raw, SkinTone.DARK).id
         }
         set(value) = sp.edit { putString(KEY_SKIN_DARK, KeyboardSkins.byId(value, SkinTone.DARK).id) }
