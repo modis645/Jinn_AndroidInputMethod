@@ -2287,6 +2287,27 @@ object PinyinEngine {
         }
     }
 
+    /**
+     * 后台预建简拼首字母索引（进程启动 / 词库加载完后调用一次，别在按键路径上调）。
+     *
+     * 建索引是纯内存计算，但规模是「全部词库键 × 音节切分」，几百毫秒到几秒级；
+     * 放到后台线程后，用户的第一个键不会等它。
+     */
+    fun preloadInitialsIndex() {
+        if (initialsIndex != null) return
+        Thread {
+            runCatching {
+                // 词库可能还在后台加载：等它就绪再建，否则索引会是空的且一直空着
+                var waited = 0
+                while (!isLoaded && waited < 60) {
+                    Thread.sleep(500L)
+                    waited++
+                }
+                ensureInitialsIndex()
+            }.onFailure { Diagnostics.w(TAG, "简拼索引构建失败: ${it.message}") }
+        }.apply { name = "abbrev-index"; isDaemon = true }.start()
+    }
+
     /** 把一个完整的拼音键拆成音节；拆不干净（有残码）返回 null */
     private fun splitSyllables(key: String): List<String>? {
         val (sylls, rest) = segment(key)
@@ -2386,7 +2407,10 @@ object PinyinEngine {
         if (typed.any { it !in 'a'..'z' }) return emptyList()
         synchronized(abbrevCache) { abbrevCache[typed]?.let { return it } }
 
-        val index = ensureInitialsIndex()
+        // 索引一律在后台线程建好再用：建索引要遍历全部词库键，放在按键路径上会拖住 UI
+        // 线程（2026-11-15 实测「输入法无法调用 / 闪退」，就是首键触发建索引被系统判成
+        // 无响应）。没建好时先不出简拼候选，建好后自然出现。
+        val index = initialsIndex ?: return emptyList()
         if (index.isEmpty()) return emptyList()
 
         val out = ArrayList<Pair<String, Int>>(ABBREV_MAX_WORDS)
@@ -2509,7 +2533,11 @@ object PinyinEngine {
         // 若仍按 1 分组，单字「我」会被归到「与输入音节数相同」的第一组、压住「我看看」——
         // 这正是用户报的「混拼输入会把全拼的汉字直接上屏」（用户 2026-11-15）。
         var targetSyllables = syllables.size
-        for ((word, sylCount) in abbreviationCandidates(raw)) {
+        // 简拼是「加分项」，任何异常都不许打断这次输入（宁可少候选，不能崩进程）
+        val abbrevHits = runCatching { abbreviationCandidates(raw) }
+            .onFailure { Diagnostics.w(TAG, "简拼候选失败: ${it.message}") }
+            .getOrDefault(emptyList())
+        for ((word, sylCount) in abbrevHits) {
             if (words.add(word)) syllableCounts[word] = sylCount
             if (sylCount > targetSyllables) targetSyllables = sylCount
         }
