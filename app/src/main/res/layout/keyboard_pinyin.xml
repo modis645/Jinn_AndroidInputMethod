@@ -50,7 +50,7 @@
             <!-- 第一行：10 个字母 -->
             <LinearLayout
                 android:layout_width="match_parent"
-                android:layout_height="66dp"
+                android:layout_height="58dp"
                 android:orientation="horizontal">
 
                 <com.jinn.inputmethod.PinyinKey
@@ -117,7 +117,7 @@
             <!-- 第二行：9 个字母 -->
             <LinearLayout
                 android:layout_width="match_parent"
-                android:layout_height="66dp"
+                android:layout_height="58dp"
                 android:orientation="horizontal">
 
                 <com.jinn.inputmethod.PinyinKey
@@ -181,7 +181,7 @@
                  20dp×66dp ⇒ 图标 20dp，正好是原先的两倍（要求「内部文本两倍」）。 -->
             <LinearLayout
                 android:layout_width="match_parent"
-                android:layout_height="66dp"
+                android:layout_height="58dp"
                 android:orientation="horizontal">
 
                 <ImageButton
