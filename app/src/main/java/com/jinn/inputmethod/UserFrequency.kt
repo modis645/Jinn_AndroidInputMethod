@@ -330,6 +330,15 @@ internal object UserFrequency {
         scheduleSave()
     }
 
+    /**
+     * 该词累计被选中的次数（≈ 权重，长期不用会按 librime 公式衰减，所以是「有效次数」）。
+     * 只读、不触发落盘；没记录过返回 0。
+     */
+    fun weightOf(word: String): Double {
+        if (!enabled || word.isEmpty()) return 0.0
+        return entries[PinyinEngine.toSimplified(word)]?.weight ?: 0.0
+    }
+
     /** 超出上限时淘汰权重最低的条目（保持文件与内存都有界） */
     private fun trimIfNeeded() {
         val excess = entries.size - MAX_ENTRIES
