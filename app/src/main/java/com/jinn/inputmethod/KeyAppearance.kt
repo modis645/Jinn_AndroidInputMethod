@@ -40,8 +40,8 @@ object KeyAppearance {
     /** 圆角步进：键盘外观页 SeekBar 逐格 1dp */
     const val CORNER_STEP_DP = 1f
 
-    /** 默认圆角：10dp（幻影版外观调优：5dp 的键面像方块，10dp 才接近主流输入法的圆润观感） */
-    const val DEFAULT_CORNER_DP = 10f
+    /** 默认圆角：7dp（用户 2026-11-15 指定的默认外观：7dp 的键面圆润但不失键的边界） */
+    const val DEFAULT_CORNER_DP = 7f
 
     // ── 按键间隙（dp）──────────────────────────────────────────
 
@@ -99,7 +99,7 @@ object KeyAppearance {
      * 两者一旦分叉，从没打开过外观页的用户会在首次 `configure()` 后看到键盘莫名变高或变矮。
      * 这条不变式由 `CandidateRowsTest` 直接对拍 XML（数字改了这里也要改，别只改注释）。
      */
-    const val DEFAULT_KEY_HEIGHT_DP = 58f
+    const val DEFAULT_KEY_HEIGHT_DP = 48f
 
     /** SeekBar 最大进度（高度：见 [MIN_KEY_HEIGHT_DP]~[MAX_KEY_HEIGHT_DP]，步进 [KEY_HEIGHT_STEP_DP]） */
     val KEY_HEIGHT_PROGRESS_MAX: Int = progressSteps(MIN_KEY_HEIGHT_DP, MAX_KEY_HEIGHT_DP, KEY_HEIGHT_STEP_DP)
