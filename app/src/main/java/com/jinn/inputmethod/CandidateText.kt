@@ -36,7 +36,7 @@ object CandidateText {
     const val STEP_SP = 1f
 
     /** 默认字号（sp）：28sp（2026-10-21 由 20sp 调档） */
-    const val DEFAULT_SP = 28f
+    const val DEFAULT_SP = 23f
 
     /** 拼音字号与候选字号的比例：0.7（默认档 28sp → 19.6sp） */
     const val PINYIN_RATIO = 0.7f
@@ -56,6 +56,9 @@ object CandidateText {
      * 用户动过滑杆后写具体值；本值同时是 [Prefs.pinyinTextSp] 的默认值。
      */
     const val PINYIN_DEFAULT_AUTO = 0f
+
+    /** 拼音行默认字号：26sp（用户 2026-11-15 指定的默认外观；0 = 自动，仍可在外观页拉回） */
+    const val DEFAULT_PINYIN_SP = 26f
 
     /** 拼音字号步进（sp）：滑杆逐格 1sp */
     const val STEP_PINYIN_SP = 1f
