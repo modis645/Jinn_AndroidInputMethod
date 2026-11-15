@@ -752,14 +752,17 @@ class VoiceSettingsActivity : ComponentActivity() {
         for ((id, box) in revealChecks()) {
             if (id != backend && box.isChecked) box.setChecked(false)
         }
-        cardVoiceServer.visibility = if (enabled && backend == VoiceBackend.CAPS) View.VISIBLE else View.GONE
-        cardXfCredentials.visibility = if (enabled && backend == VoiceBackend.XF) View.VISIBLE else View.GONE
-        cardOaiCredentials.visibility = if (enabled && backend == VoiceBackend.OAI) View.VISIBLE else View.GONE
-        cardAliCredentials.visibility = if (enabled && backend == VoiceBackend.ALI) View.VISIBLE else View.GONE
-        cardTencentCredentials.visibility = if (enabled && backend == VoiceBackend.TENCENT) View.VISIBLE else View.GONE
-        cardAzureCredentials.visibility = if (enabled && backend == VoiceBackend.AZURE) View.VISIBLE else View.GONE
-        cardBaiduCredentials.visibility = if (enabled && backend == VoiceBackend.BAIDU) View.VISIBLE else View.GONE
-        cardDeepgramCredentials.visibility = if (enabled && backend == VoiceBackend.DEEPGRAM) View.VISIBLE else View.GONE
+        // 在线语音整套下线（2026-11-15，用户要求）：「后端选择」「自建服务端」和八张在线
+        // 凭据卡一律不再出现 —— 不看后端、不看开关，恒 GONE。界面只留本机离线一条路，
+        // 于是这一页不存在「进去只有在线配置」的可能。
+        cardVoiceServer.visibility = View.GONE
+        cardXfCredentials.visibility = View.GONE
+        cardOaiCredentials.visibility = View.GONE
+        cardAliCredentials.visibility = View.GONE
+        cardTencentCredentials.visibility = View.GONE
+        cardAzureCredentials.visibility = View.GONE
+        cardBaiduCredentials.visibility = View.GONE
+        cardDeepgramCredentials.visibility = View.GONE
         cardLocalAsr.visibility = if (backend == VoiceBackend.LOCAL) View.VISIBLE else View.GONE
         if (backend == VoiceBackend.LOCAL) refreshLocalAsrStatus()
     }
