@@ -110,7 +110,71 @@ internal object LocalAsrModel {
         "https://ghfast.top/$ARCHIVE_PATH",
     )
 
-    fun dir(context: Context): File = File(context.filesDir, DIR_NAME).apply { mkdirs() }
+    /**
+     * 模型目录：**优先外部专属目录**（`Android/data/<pkg>/files/local-asr`）。
+     *
+     * 为什么改（2026-11-17）：真机实测这台手机的「清除缓存」会把应用数据目录里的大文件一起回收 ——
+     * 用户数据从 248MB 掉到 7MB（正好只剩词库索引），模型被删掉之后每次都要重下 163MB。
+     * 外部专属目录不参与系统「清除缓存」的回收范围，且随卸载一起删除，安全边界不变
+     * （Scoped Storage 下本应用只能读写自己这一份）。
+     *
+     * 选择规则按「哪里有内容就用哪里」：迁移过的自然落到外部；迁移失败 / 外部不可用时
+     * 仍用原来的 `filesDir/local-asr`，行为与改造前完全一致（不会因为切目录把现有模型判成丢失）。
+     */
+    fun dir(context: Context): File {
+        val legacy = File(context.filesDir, DIR_NAME)
+        val ext = runCatching { context.getExternalFilesDir(null) }
+            .getOrNull()?.let { File(it, DIR_NAME) }
+        return when {
+            ext != null && ext.listFiles()?.isNotEmpty() == true -> ext
+            legacy.listFiles()?.isNotEmpty() == true -> legacy
+            else -> (ext ?: legacy).apply { mkdirs() }
+        }
+    }
+
+    /**
+     * 一次性把模型从 `filesDir/local-asr` 搬到外部专属目录（幂等，可在任意线程调用）。
+     *
+     * 只做「搬」不做「下载」：先复制到 `.part` 再改名，全部成功才删旧目录 ——
+     * 中途被杀 / 断电时旧目录仍完整，[dir] 会继续用它，不会把模型判成丢失。
+     */
+    fun migrateIfNeeded(context: Context) {
+        val legacy = File(context.filesDir, DIR_NAME)
+        val ext = runCatching { context.getExternalFilesDir(null) }.getOrNull()
+        if (ext == null) {
+            Diagnostics.w("LocalAsr", "外部专属目录不可用，继续使用 filesDir/local-asr")
+            return
+        }
+        val target = File(ext, DIR_NAME)
+        if (target.absolutePath == legacy.absolutePath) return
+        if (target.listFiles()?.isNotEmpty() == true) return
+        val sources = legacy.listFiles().orEmpty().filter { it.isFile && it.length() > 0L }
+        if (sources.isEmpty()) return
+        target.mkdirs()
+        var movedAll = true
+        for (f in sources) {
+            val tmp = File(target, f.name + ".part")
+            val ok = runCatching {
+                tmp.delete()
+                f.inputStream().use { input ->
+                    tmp.outputStream().use { output -> input.copyTo(output, 1 shl 20) }
+                }
+                tmp.renameTo(File(target, f.name))
+            }.getOrDefault(false)
+            if (!ok) {
+                movedAll = false
+                runCatching { tmp.delete() }
+                break
+            }
+        }
+        if (movedAll) {
+            legacy.deleteRecursively()
+            Diagnostics.i("LocalAsr", "模型已迁到外部专属目录（清缓存不会再删）")
+        } else {
+            target.listFiles()?.forEach { runCatching { it.delete() } }
+            Diagnostics.w("LocalAsr", "模型迁移失败，继续使用 filesDir/local-asr")
+        }
+    }
 
     fun modelFile(context: Context): File = File(dir(context), MODEL_FILE)
 
