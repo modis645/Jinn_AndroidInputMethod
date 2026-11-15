@@ -668,12 +668,13 @@ class JinnIme : InputMethodService() {
         }.onFailure { Diagnostics.w(TAG, "IME 窗口格式/动画设置失败: ${it.message}") }
         prefs = Prefs(this)
         // 装好第一次起作用就开始拉离线语音模型（用户 2026-11-15：「应该安装以后自动下载模型」）。
-        // 以前只在「打开设置页的离线语音卡」时才自动开始，等于用户不点设置就永远没模型。
-        // 条件：语音总开关开着、模型没就绪、也没有在跑的任务；放后台线程，不占启动路径。
-        // 只在本进程试一次，失败不自动重试（重试按钮在设置页的离线语音卡上）。
+        // 以前只在「打开设置页的离线语音卡」时才自动开始，等于用户不点设置就永远没模型；
+        // 后来又加了一道「语音总开关开着」的条件 —— 开关默认关，等于自动下载永远不会触发
+        // （用户 2026-11-16 实测「也没有自动下载」）。现在不看开关：模型没就绪就下，
+        // 开关只管「肯不肯用语音」，不管「有没有模型」。
+        // 失败不自动重试：重试入口在设置页的离线语音卡（下载 / 从本地导入）。
         Thread {
             runCatching {
-                if (!prefs.voiceInputEnabled) return@runCatching
                 if (LocalAsrModel.isReady(applicationContext)) return@runCatching
                 if (LocalAsrDownloader.isRunning()) return@runCatching
                 Diagnostics.i(TAG, "离线语音: 进程启动，自动开始下载模型")
