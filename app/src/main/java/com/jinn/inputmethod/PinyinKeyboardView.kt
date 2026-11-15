@@ -3242,8 +3242,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
      */
     private fun bindPinyinCaret() {
         viewCandidatePinyin.setOnTouchListener { _, event ->
-            if (event.actionMasked != MotionEvent.ACTION_UP) return@setOnTouchListener false
-            if (shuangpinMode || composing.isEmpty() || layer != LAYER_LETTER) return@setOnTouchListener false
+            // DOWN 必须自己消费：同一手势才拿得到 UP。早先写成「非 UP 一律 return false」，
+            // 等于放行 DOWN、永远收不到 UP —— 点拼音条既不定光标，事件还被上层候选区当成
+            // 「点了第一个候选」，于是 wo'kk 一点就把「我」送上去、只留半截 kk（用户反馈原话）。
+            if (event.actionMasked == MotionEvent.ACTION_DOWN) return@setOnTouchListener true
+            if (event.actionMasked != MotionEvent.ACTION_UP) return@setOnTouchListener true
+            if (shuangpinMode || composing.isEmpty() || layer != LAYER_LETTER) return@setOnTouchListener true
             val shown: String = viewCandidatePinyin.text?.toString() ?: ""
             // 不取 TextView.layout（View 上的同名方法会让属性解析落到别处），直接按字号逐字量宽：
             // 拼音条是单行、字号固定，这样算出的“点在第几个字”与视觉一致。
@@ -4411,6 +4415,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val consumption = PinyinEngine.consumption(fullInput, candidate)
         if (consumption.quanpinChars >= fullInput.length) {
             composing.clear()
+            pinyinCaret = -1
             return true
         }
         if (shuangpinMode) {
@@ -4421,6 +4426,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         } else {
             composing.delete(0, consumption.quanpinChars)
         }
+        // 残码可继续编辑：光标落到新串末尾（否则残码出来后光标停在旧位置，用户以为「拼音改不了」）
+        if (pinyinCaret >= 0) pinyinCaret = composing.length
         if (Diagnostics.KEY_TRACE) Diagnostics.v(
             TAG,
             "残码保留: 消费=\"${fullInput.take(consumption.quanpinChars)}\" " +
