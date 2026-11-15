@@ -45,13 +45,13 @@ internal object LocalAsrModel {
     /** SenseVoice 官方打包（tar.bz2）：下载后解出上面两件文件，压缩包本身不保留 */
     const val ARCHIVE_URL =
         "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/" +
-            "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17.tar.bz2"
+            "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09.tar.bz2"
     const val ARCHIVE_NAME = "sense-voice-small.tar.bz2"
 
     /** 模型压缩包的下载地址清单（同 [VAD_URLS]，官方地址 + 公共加速前缀） */
     private const val ARCHIVE_PATH =
         "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/" +
-            "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17.tar.bz2"
+            "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09.tar.bz2"
     val ARCHIVE_URLS: List<String> = listOf(
         ARCHIVE_URL,
         "https://ghfast.top/$ARCHIVE_PATH",
