@@ -56,6 +56,8 @@
     <string name="key_space">空格</string>
     <string name="space_hint_placeholder">输入类型</string>
     <string name="key_comma">，</string>
+    <string name="key_comma_period">，。</string>
+    <string name="key_voice_long">语音</string>
     <string name="key_period">。</string>
     <string name="key_clear_candidates">✕</string>
     <!-- 无障碍描述 -->
