@@ -112,8 +112,7 @@ class VoiceSettingsActivity : ComponentActivity() {
                 downloadWatchKey = ""
                 downloadWatchSince = 0L
                 textLocalAsrStatus.text =
-                    "下载卡住了（${DOWNLOAD_STALL_MS / 1000} 秒没有进展，停在：$stage），已停止。
-" +
+                    "下载卡住了（${DOWNLOAD_STALL_MS / 1000} 秒没有进展，停在：$stage），已停止。\n" +
                         "再点一次「${TEXT_LOCAL_ASR_DOWNLOAD}」重试；也可以在电脑上下好模型再用「${TEXT_LOCAL_ASR_IMPORT}」。"
                 refreshLocalAsrStatus()
             }
@@ -847,8 +846,7 @@ class VoiceSettingsActivity : ComponentActivity() {
                 textLocalAsrStatus.text = if (stage.isNullOrBlank()) {
                     "正在下载模型… $p%（完成后自动解包写入本机）"
                 } else {
-                    "$stage
-已下载 $p%（完成后自动解包写入本机）"
+                    "$stage\n已下载 $p%（完成后自动解包写入本机）"
                 }
                 progressLocalAsr.visibility = View.VISIBLE
                 progressLocalAsr.progress = p
