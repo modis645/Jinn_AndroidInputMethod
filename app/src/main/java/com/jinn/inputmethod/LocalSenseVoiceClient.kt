@@ -119,10 +119,15 @@ internal class LocalSenseVoiceClient(
                     sileroVadModelConfig = SileroVadModelConfig(
                         model = vadPath.absolutePath,
                         threshold = 0.5f,
-                        minSilenceDuration = 0.3f,
-                        minSpeechDuration = 0.2f,
+                        // 与沙鸥（msime shared/voice/LocalAsr.cpp）逐项对齐：这三个值不是随手调的，
+                        // 那边是大样本真机调出来的（见其 note 2026-10-28-local-asr-vad-onset）
+                        minSilenceDuration = 0.5f,
+                        minSpeechDuration = 0.25f,
                         windowSize = 512,
-                        maxSpeechDuration = 1e9f,
+                        // 沙鸥给的 28 秒：既够长句，又不会让 sherpa 内部的预留缓冲溢出。
+                        // 之前这里写 1e9f（「只按静音切、永不硬切」）—— 7~9 秒的正常说话被切成
+                        // 一句、解出 1~2 个字，就是它的直接后果。
+                        maxSpeechDuration = 28.0f,
                     ),
                     sampleRate = SAMPLE_RATE,
                     numThreads = 1,
@@ -132,6 +137,7 @@ internal class LocalSenseVoiceClient(
             )
             val builder = StringBuilder()
             var pieces = 0
+            var coveredSamples = 0L
             synchronized(lock) {
                 try {
                     vad.acceptWaveform(samples)
@@ -140,6 +146,7 @@ internal class LocalSenseVoiceClient(
                         val segment = vad.front()
                         // 太短的片段（<0.2s）多半是噪声，交给模型只会得到一两个错字
                         if (segment.samples.size >= SAMPLE_RATE / 5) {
+                            coveredSamples += segment.samples.size
                             val stream = recognizer.createStream()
                             try {
                                 stream.acceptWaveform(segment.samples, SAMPLE_RATE)
@@ -156,8 +163,20 @@ internal class LocalSenseVoiceClient(
                     vad.release()
                 }
             }
-            Diagnostics.i(tag, "VAD 分句: 音频=${samples.size / SAMPLE_RATE.toFloat()}s 句数=$pieces")
-            if (builder.isBlank()) null else builder.toString()
+            val coverage = if (samples.isEmpty()) 0f else coveredSamples / samples.size.toFloat()
+            Diagnostics.i(
+                tag,
+                "VAD 分句: 音频=${samples.size / SAMPLE_RATE.toFloat()}s 句数=$pieces " +
+                    "覆盖=${(coverage * 100).toInt()}%",
+            )
+            // ── 关键：覆盖不足就**不信 VAD** ──
+            // 实测（2026-11-16 用户诊断包）：7~9 秒的正常说话，VAD 只切出一句、覆盖率极低，
+            // 逐句解码后只剩 1~2 个字（用户看到的就是「说了一长段，只上屏一个『あ』」）。
+            // 根因是 VAD 把大半段低音量语音判成静音，送去解码的只是开头一小段。
+            // 覆盖不到一半时直接返回 null，调用方退回整段解码 —— 宁可慢一点，不许丢话。
+            if (coveredSamples < samples.size / 2L) null
+            else if (builder.isBlank()) null
+            else builder.toString()
         }.getOrNull()
 
     /** PCM16（小端）→ float32 归一化到 [-1,1]；逐采样 1/32768 换算，不做重采样（采集端已是 16k） */
