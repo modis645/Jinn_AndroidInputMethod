@@ -1259,7 +1259,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         btnShift = root.findViewById(R.id.key_shift)
         // 这枚键现在发的是音节分隔符，继续用原来的「↑ 箭头」会让人以为它还是大写 ——
         // 图标改画成「分词」两个字（白色字形 + 既有的 imageTintList 着色，颜色跟其他功能键一致）
-        btnShift.setImageDrawable(buildTextIcon(TEXT_SHIFT_SPLIT))
+        btnShift.setImageDrawable(buildTextIcon("分词"))
         btnComma = root.findViewById(R.id.key_comma)
         btnPeriod = root.findViewById(R.id.key_period)
         keySemicolon = root.findViewById(R.id.key_semicolon)
