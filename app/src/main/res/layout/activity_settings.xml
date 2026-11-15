@@ -39,6 +39,7 @@
             android:layout_marginTop="2dp"
             android:layout_marginBottom="6dp"
             android:gravity="center"
+            android:id="@+id/text_settings_subtitle"
             android:text="@string/settings_subtitle"
             android:textColor="@color/text_secondary"
             android:textSize="12sp" />
