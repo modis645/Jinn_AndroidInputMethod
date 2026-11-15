@@ -139,6 +139,13 @@ internal object StorageUsage {
             scan(File(files, PinyinEngine.INDEX_CACHE_DIR), claimed),
         )
 
+        // 离线语音模型：全应用最大的一笔（≈239 MB），不单列就会被归进「其他」——
+        // 用户看到「其他 240 MB 系统杂项」只会更慌（2026-11-15 用户以为它在缓存里）
+        item(
+            "离线语音模型",
+            "本机识别模型（在「离线语音」页可下载 / 删除；清手机缓存不会删，卸载才释放）",
+            scan(File(files, LocalAsrModel.DIR_NAME), claimed),
+        )
         item("用户词频", "随打字自动累积，用于把常用词排在前面", scan(File(files, UserFrequency.FILE_NAME), claimed))
         // 台账是应用里唯一无上限增长的文件：不认领就会落进「其他」，用户在这里看不到它
         item(
