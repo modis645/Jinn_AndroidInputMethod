@@ -243,6 +243,20 @@
             </LinearLayout>
         </LinearLayout>
 
+        <!-- 一键导出用户词库（2026-11-17 用户要求）：直接进导出流程，省掉「进页面→再点导出」两步。
+             导出本身仍是原来那套（加密包 / 明文二选一、密码、SAF 保存位置、风险确认），一行不少。 -->
+        <LinearLayout
+            style="@style/SettingsCardRow"
+            android:baselineAligned="false">
+
+            <Button
+                style="@style/SettingsButton"
+                android:id="@+id/btn_export_user_dict"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:minWidth="0dp" />
+        </LinearLayout>
+
         <!-- 悬浮键盘 / 语音转为文字：两个入口按钮同行，各占一半（用户第 2 条：
              两个按钮放同一行、不要小字描述）。按钮文案由代码下发（TEXT_FLOATING_ENTRY / TEXT_VOICE_ENTRY），
              strings.xml 默认不改动。 -->
