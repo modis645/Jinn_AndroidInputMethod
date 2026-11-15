@@ -369,6 +369,16 @@ class SettingsActivity : ComponentActivity() {
             text = TEXT_USER_DICT
             setOnClickListener { startActivity(Intent(this@SettingsActivity, UserDictActivity::class.java)) }
         }
+        // 一键导出（2026-11-17）：进页面后直接弹「加密包 / 明文」二选一，少两步点击
+        findViewById<Button>(R.id.btn_export_user_dict).apply {
+            text = TEXT_USER_DICT_EXPORT
+            setOnClickListener {
+                startActivity(
+                    Intent(this@SettingsActivity, UserDictActivity::class.java)
+                        .putExtra(UserDictActivity.EXTRA_AUTO_EXPORT, true),
+                )
+            }
+        }
 
         // 自动唤起键盘：勾选即写入，立即生效（JinnIme.onShowInputRequested 每次实时读取）
         switchAutoShowKeyboard.setOnCheckedChangeListener { _, checked ->
@@ -1707,6 +1717,7 @@ class SettingsActivity : ComponentActivity() {
         const val TEXT_FLOATING_ENTRY = "绑定悬浮键盘"
         /** 用户词库入口：动作名，状态由页面内的说明弹框交代 */
         const val TEXT_USER_DICT = "生成用户词库"
+        const val TEXT_USER_DICT_EXPORT = "一键导出词库"
 
         // 只使用繁体字：胶囊开关文案（与「自动唤起键盘」同行，紧随其后）
         const val TEXT_USE_TRADITIONAL = "只使用繁体字"
