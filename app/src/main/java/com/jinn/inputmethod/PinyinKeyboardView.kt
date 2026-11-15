@@ -41,6 +41,12 @@ private const val TEXT_VOICE_KEY_IDLE = "长语音"
 private const val TEXT_VOICE_KEY_LISTEN = "聆听中"
 private const val TEXT_VOICE_KEY_CANCEL = "松开取消"
 /** 连续录音中的键面动词：`结束`（点一下就是结束；不显示秒表，键面只有两行小字的空间） */
+/** 电平条的底宽占比：静音也留一截，观感是「在录」而不是「没反应」 */
+private const val VOICE_LEVEL_FLOOR = 0.18f
+
+/** 电平回落系数：两次回调之间保留上一次的多少（越大越平滑、越迟钝） */
+private const val VOICE_LEVEL_DECAY = 0.72f
+
 private const val TEXT_VOICE_KEY_STOP = "结束"
 private const val TEXT_SHIFT_SPLIT = "分词"
 private const val TEXT_SHIFT_UPPER = "大写"
@@ -898,6 +904,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 视图靠 [setVoiceToggleState] 被通报，不自己猜（录音可能被外部终止，视图也可能重建）。
      */
     private var voiceToggleActive = false
+
+    /** 上一次画出来的电平（做平滑用，避免 10Hz 回调把横条画成闪烁） */
+    private var lastVoiceLevel = 0f
 
     private val btnBackspace: View
     private val btnEnter: View
@@ -2125,9 +2134,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         if (word.isEmpty()) return
         if (PinyinEngine.isKnownWord(word)) return
         val typedKey = composing.toString().replace(PinyinEngine.SEPARATOR_CHAR.toString(), "")
-        val hits = PinyinEngine.pickCountOf(word)
-        // 不够门槛：这次只进词频表（下次再选同词会自动累加，够数自然收）
-        if (!PinyinEngine.shouldAdmitUserWord(word, typedKey, hits)) return
+        // 不够门槛：这次只计数（下次再选同词会自动累加，够数自然收）
+        if (!PinyinEngine.shouldAdmitUserWord(word, typedKey)) return
         SelectionLedger.record(PinyinEngine.toSimplified(word), pinyin)
         // 立刻进候选池（不必等下次启动）：自造词当场就能用，否则用户「造了词还是打不出来」
         PinyinEngine.noteUserWord(word, pinyin)
@@ -5028,7 +5036,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             voiceHoldCancelArmed -> TEXT_VOICE_KEY_CANCEL
             else -> TEXT_VOICE_KEY_LISTEN
         }
-        if (!voiceHoldActive && !voiceToggleActive) setVoiceLevel(0f)
+        if (!voiceHoldActive && !voiceToggleActive) clearVoiceLevel()
         // 英文键盘没有子 TextView，`key_space` 自己就是文本：同一枚角标挂它身上
         (btnSpace as? TextView)?.let {
             it.compoundDrawablePadding = (3f * resources.displayMetrics.density).toInt()
@@ -5042,21 +5050,43 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 只在长按态生效：没在录音时这条必须是空的，否则「键盘自己在录音」的观感会误导用户。
      */
     fun updateVoiceLevel(level: Float) {
-        // 长按与连续录音都要动这条电平：它是「收音还在继续」的唯一实证（用户 2026-11-16）
-        if (!voiceHoldActive && !voiceToggleActive) return
-        setVoiceLevel(level)
+        // 不在视图侧判「是否在录」：录没录只有 IME 知道（本方法也只在那时被调用）。
+        // 原先按 `voiceHoldActive / voiceToggleActive` 短路，视图重建（换肤 / 换输入框）后
+        // 这两个字段是 false 而录音仍在跑 —— 电平整段被丢掉，用户看到的就是「没有电平波」。
+        val smoothed = maxOf(level.coerceIn(0f, 1f), lastVoiceLevel * VOICE_LEVEL_DECAY)
+        lastVoiceLevel = smoothed
+        setVoiceLevel(smoothed)
     }
 
+    /**
+     * 把 0..1 的电平画进长语音键里的那条横条。
+     *
+     * 静音时也留 [VOICE_LEVEL_FLOOR] 的底宽：一条 3dp 的细线在几十毫秒的低能量间隙里
+     * 归零再长回来，观感是「闪一下又没了」，看不出「还在录」（用户 2026-11-16 反馈
+     * 「长按空格 / 长语音都没有电平波」）。
+     */
     private fun setVoiceLevel(level: Float) {
         val bar = btnVoiceLevel ?: return
         val host = btnVoiceLong.width
         if (host <= 0) return
         val maxW = host - dpFloat(12f).toInt()
         if (maxW <= 0) return
-        val w = (maxW * level.coerceIn(0f, 1f)).toInt()
+        val scaled = VOICE_LEVEL_FLOOR + (1f - VOICE_LEVEL_FLOOR) * level.coerceIn(0f, 1f)
+        val w = (maxW * scaled).toInt()
         val lp = bar.layoutParams ?: return
         if (lp.width != w) {
             lp.width = w
+            bar.layoutParams = lp
+        }
+    }
+
+    /** 收尾：电平条清零（录音结束后由 [updateSpaceHint] 调） */
+    private fun clearVoiceLevel() {
+        lastVoiceLevel = 0f
+        val bar = btnVoiceLevel ?: return
+        val lp = bar.layoutParams ?: return
+        if (lp.width != 0) {
+            lp.width = 0
             bar.layoutParams = lp
         }
     }
