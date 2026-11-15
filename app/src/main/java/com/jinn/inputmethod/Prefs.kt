@@ -152,19 +152,9 @@ class Prefs(private val appContext: Context) {
         get() = strOr(KEY_PROMPT, "").orEmpty()
         set(value) = sp.edit { putString(KEY_PROMPT, value) }
 
-    /** 去掉句尾逗号句号，对齐桌面端 trash_punc 的习惯 */
-    var stripTrailingPunc: Boolean
-        get() = boolOr(KEY_STRIP_PUNC, true)
-        set(value) = sp.edit { putBoolean(KEY_STRIP_PUNC, value) }
-
-    /**
-     * 用预编辑（composing）文本实时回显。
-     * 少数输入框对长预编辑串兼容不好，关掉后改为识别完成一次性提交。
-     * 默认关闭：识别完成一次性提交更稳，避免长串兼容问题。
-     */
-    var useComposing: Boolean
-        get() = boolOr(KEY_COMPOSING, false)
-        set(value) = sp.edit { putBoolean(KEY_COMPOSING, value) }
+    // 「去掉句尾标点」与「用预编辑实时回显」两个开关已于 2026-11-17 连同界面一起删除：
+    // 行为固定为「去句尾逗号句号」+「识别完成一次性提交」（见 JinnIme.handleResult）。
+    // KEY_STRIP_PUNC / KEY_COMPOSING 仍保留，只为「导入旧备份」时不当成不认识的键。
 
     /**
      * 是否启用双拼。
@@ -1917,8 +1907,6 @@ class Prefs(private val appContext: Context) {
         put(KEY_LOCK_SERVER, lockServer)
         put(KEY_LANGUAGE, language)
         put(KEY_PROMPT, prompt)
-        put(KEY_STRIP_PUNC, stripTrailingPunc)
-        put(KEY_COMPOSING, useComposing)
         put(KEY_SHUANGPIN, useShuangpin)
         put(KEY_SHUANGPIN_SCHEME, shuangpinScheme)
         put(KEY_KB_ENGLISH, keyboardEnglish)
@@ -2169,8 +2157,8 @@ class Prefs(private val appContext: Context) {
                 KEY_LOCK_SERVER -> asBool(v)?.let { lockServer = it; ok() } ?: bad(key)
                 KEY_LANGUAGE -> asString(v)?.let { language = it; ok() } ?: bad(key)
                 KEY_PROMPT -> asString(v)?.let { prompt = it; ok() } ?: bad(key)
-                KEY_STRIP_PUNC -> asBool(v)?.let { stripTrailingPunc = it; ok() } ?: bad(key)
-                KEY_COMPOSING -> asBool(v)?.let { useComposing = it; ok() } ?: bad(key)
+                // 已删除的两个开关：老备份里带着这两个键，读到就当无事发生（值不再生效）
+                KEY_STRIP_PUNC, KEY_COMPOSING -> ok()
                 KEY_SHUANGPIN -> asBool(v)?.let { useShuangpin = it; ok() } ?: bad(key)
                 KEY_SHUANGPIN_SCHEME -> asInt(v)?.let { shuangpinScheme = it; ok() } ?: bad(key)
                 KEY_KB_ENGLISH -> asBool(v)?.let { keyboardEnglish = it; ok() } ?: bad(key)
