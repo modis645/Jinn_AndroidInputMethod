@@ -1885,7 +1885,15 @@ class JinnIme : InputMethodService() {
                 }
                 // 返回 true 才是「真开始录音」；其余分支都要给可见提示，不许装作在录
                 override fun onVoiceHoldStart(): Boolean {
-                    if (!prefs.voiceInputEnabled) return false
+                    if (!prefs.voiceInputEnabled) {
+                        // 长按空格是键盘上唯一的语音入口：开关没开时静默 return false，用户只会以为
+                        // 「键盘没有语音功能」（本轮用户反馈原话）。这里给一条提示并把设置页拉起来，
+                        // 让「按了没反应」变成「一步能到的地方」。
+                        Diagnostics.i(TAG, "onVoiceHoldStart: 语音输入未开启，转到语音设置页")
+                        toast("语音输入未开启，正在打开语音设置…")
+                        openVoiceSettings()
+                        return false
+                    }
                     // 密码类输入框不录音（2026-11-01）：音频是**出设备**的，比译文更敏感 ——
                     // 宿主报出密码变体、或声明「不要个性化学习」时照拒。判据与翻译同一支
                     // [InputFieldPrivacy.blocksTranslation]，**不**复用 `suppressLearning`：
@@ -5932,6 +5940,14 @@ class JinnIme : InputMethodService() {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         runCatching { startActivity(intent) }
             .onFailure { Log.e(TAG, "openSettings: ${it.message}") }
+    }
+
+    /** 打开语音设置页（长按空格且语音未开启时的兜底入口） */
+    private fun openVoiceSettings() {
+        val intent = Intent(this, VoiceSettingsActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { startActivity(intent) }
+            .onFailure { Log.e(TAG, "openVoiceSettings: ${it.message}") }
     }
 
     // ── 状态渲染 ──────────────────────────────────────────────
