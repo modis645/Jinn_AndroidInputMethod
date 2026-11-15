@@ -39,8 +39,6 @@ class KeyAppearanceActivity : Activity() {
 
     // ── 2026-10-09 由设置页迁入的四组控件（外观相关集中在本页）──
     private lateinit var spinnerCandidateRows: UserAwareSpinner
-    private lateinit var switchKeyHint: Switch
-    private lateinit var switchPinyinQuanpin: Switch
 
     /** 数字行开关（26 键区第一行字母之上那排 `1234567890`） */
     private lateinit var switchNumberRow: Switch
@@ -378,25 +376,9 @@ class KeyAppearanceActivity : Activity() {
             }
         spinnerCandidateRows.setSelection(prefs.candidateRows - 1)
 
-        // 键面韵母提示（双拼）：关掉后键面只显示字母
-        switchKeyHint = findViewById(R.id.switch_key_hint)
-        switchKeyHint.text = TEXT_KEY_HINT_TITLE
-        switchKeyHint.isChecked = prefs.showKeyHint
-        switchKeyHint.setOnCheckedChangeListener { _, checked ->
-            prefs.showKeyHint = checked
-            Diagnostics.i(TAG, "键面韵母提示: ${if (checked) "开启" else "关闭"}")
-            JinnIme.onKeyAppearanceChanged()
-        }
-
-        // 双拼候选全拼：关掉后候选栏显示按下的字母
-        switchPinyinQuanpin = findViewById(R.id.switch_pinyin_quanpin)
-        switchPinyinQuanpin.text = TEXT_QUANPIN_TITLE
-        switchPinyinQuanpin.isChecked = prefs.showQuanpin
-        switchPinyinQuanpin.setOnCheckedChangeListener { _, checked ->
-            prefs.showQuanpin = checked
-            Diagnostics.i(TAG, "拼音显示为声韵: ${if (checked) "开启" else "关闭"}")
-            JinnIme.onKeyAppearanceChanged()
-        }
+        // 「键盘内显韵母」「双拼候选全音」两个开关 2026-11-15 已删除（用户要求）：
+        // 只有全拼一种输入方案，键面韵母提示与双拼候选全音都没有意义。
+        // Prefs 的对应键保留（默认已改为关），老配置导入也不会崩。
 
         // 数字行（26 键区第一行字母之上那排 1234567890）：默认关 = 与重构前一致。
         // 开 / 关都走同一条即时生效路径：refreshAppearance → applyKeyAppearance → syncNumberRow
