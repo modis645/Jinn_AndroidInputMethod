@@ -590,6 +590,38 @@ class JinnIme : InputMethodService() {
 
     private var mode = Mode.NONE
 
+    /**
+     * 「连续口述」会话：点一下「长语音」开始，**每句上屏后自动接下一轮**，
+     * 直到用户点「结束」或静音闸门收会话（用户 2026-11-17 指定「上屏后自动续说」）。
+     *
+     * 与 [Mode] 的区别：Mode 管的是「这一轮录音开没开」，本字段管的是「这一串口述还要不要继续」。
+     * 上屏发生在录音已停之后，只有它能把下一轮接起来。
+     */
+    private var dictationSession = false
+
+    /** 本轮是否已经听到人声：静音闸门只收「一直没人说话」的轮次 */
+    private var dictationHeard = false
+
+    /**
+     * 静音闸门：自动续说接起来的下一轮，若 [DICTATION_IDLE_MS] 内一句人声都没有，
+     * 就收掉会话 —— 否则用户丢下手机，键盘会一轮轮空录到 300 秒上限、白耗电白解码。
+     */
+    private val dictationIdleStop = Runnable {
+        if (!dictationSession || dictationHeard) return@Runnable
+        Diagnostics.i(TAG, "连续口述: ${DICTATION_IDLE_MS}ms 无人声，收会话")
+        dictationSession = false
+        if (mode == Mode.TOGGLE) stopRecording(commit = false)
+        setHint(getString(R.string.hint_dictation_idle))
+    }
+
+    /** 排一次静音闸门；[first] 给首轮的更宽余量（用户刚点完键还要开口） */
+    private fun armDictationIdle(first: Boolean = false) {
+        ui.removeCallbacks(dictationIdleStop)
+        dictationHeard = false
+        if (!dictationSession) return
+        ui.postDelayed(dictationIdleStop, if (first) DICTATION_FIRST_IDLE_MS else DICTATION_IDLE_MS)
+    }
+
     /** 连续录音中再次按下：抬手即结束 */
     private var stopOnUp = false
 
@@ -701,6 +733,11 @@ class JinnIme : InputMethodService() {
         // 失败不自动重试：重试入口在设置页的离线语音卡（下载 / 从本地导入）。
         Thread {
             runCatching {
+                // ④ 2026-11-17：模型曾被手机「清除缓存」当可回收文件删掉（用户实测清缓存后
+                // 用户数据 248MB→7MB）。先把它迁到外部专属目录（Android/data/<pkg>/files），
+                // 再扫一次下载残留 —— 迁移失败会自动退回原目录，不影响可用性。
+                LocalAsrModel.migrateIfNeeded(applicationContext)
+                LocalAsrDownloader.sweepCache(applicationContext)
                 if (LocalAsrModel.isReady(applicationContext)) return@runCatching
                 if (LocalAsrDownloader.isRunning()) return@runCatching
                 Diagnostics.i(TAG, "离线语音: 进程启动，自动开始下载模型")
@@ -2011,7 +2048,10 @@ class JinnIme : InputMethodService() {
                  */
                 override fun onVoiceToggle(): Boolean {
                     if (mode == Mode.TOGGLE) {
-                        Diagnostics.i(TAG, "onVoiceToggle: 再点一下 → 结束连续录音")
+                        Diagnostics.i(TAG, "onVoiceToggle: 再点一下 → 结束连续口述")
+                        // 用户主动收尾：会话结束，结果上屏后不再自动接下一轮
+                        dictationSession = false
+                        ui.removeCallbacks(dictationIdleStop)
                         stopRecording(commit = true)
                         return false
                     }
@@ -2051,12 +2091,17 @@ class JinnIme : InputMethodService() {
                         toast(TEXT_VOICE_CONNECTING)
                         return false
                     }
+                    // 点一下 = 开一串连续口述（每句自动上屏、自动接下一轮）
+                    dictationSession = true
                     startRecording(Mode.TOGGLE)
                     if (mode != Mode.TOGGLE) {
                         Diagnostics.w(TAG, "onVoiceToggle: startRecording 未进入 TOGGLE，本次点击作废")
+                        dictationSession = false
                         toast(TEXT_VOICE_START_FAILED)
                         return false
                     }
+                    armDictationIdle(first = true)
+                    setHint(getString(R.string.hint_dictation_start))
                     return true
                 }
                 override fun onVoiceHoldUpdate(cancelArmed: Boolean) = setCancelArmed(cancelArmed)
@@ -3553,6 +3598,11 @@ class JinnIme : InputMethodService() {
                             micButton?.updateLevel(level)
                             // 26 键的长语音键同样要吃电平：键内那条音量条就是「还在录」的唯一实证
                             pinyinKeyboard?.updateVoiceLevel(level)
+                            // 连续口述：一听到人声就撤掉静音闸门，别在用户说话时把会话收掉
+                            if (dictationSession && !dictationHeard && level > DICTATION_VOICE_LEVEL) {
+                                dictationHeard = true
+                                ui.removeCallbacks(dictationIdleStop)
+                            }
                         }
                     },
             onError = { message -> ui.post { onRecorderError(message) } },
@@ -4539,12 +4589,15 @@ class JinnIme : InputMethodService() {
             return
         }
 
-        // 上一段还挂着预编辑文本的话先落地，避免被新结果覆盖掉
-        if (prefs.useComposing) currentInputConnection?.finishComposingText()
+        // 预编辑已固定关闭（识别完成一次性提交），不必再收尾组合态
 
         mode = target
         // 连续录音的键面由 IME 通报（视图不自己猜）：重建后也能补上「结束 m:ss」这一态
-        if (target == Mode.TOGGLE) pinyinKeyboard?.setVoiceToggleState(true)
+        if (target == Mode.TOGGLE) {
+            pinyinKeyboard?.setVoiceToggleState(true)
+            // 续说接起来的轮次也排闸门（10s）；用户手点的那一次由 onVoiceToggle 用更宽的 20s 覆盖
+            armDictationIdle()
+        }
         micButton?.recording = true
         Diagnostics.i(TAG, "startRecording: 开始录音 target=$target")
         setHint(
@@ -4606,15 +4659,13 @@ class JinnIme : InputMethodService() {
             }
         } else {
             asr?.cancelTask()
+            dictationSession = false
+            ui.removeCallbacks(dictationIdleStop)
             awaitingResult = false
             voiceResultPackage = null
             ui.removeCallbacks(recognizeTimeout)
             Diagnostics.i(TAG, "stopRecording: 取消（不采用结果）")
-            // 取消时把已经回显的预编辑文本一起撤掉
-            if (prefs.useComposing) {
-                currentInputConnection?.setComposingText("", 1)
-                currentInputConnection?.finishComposingText()
-            }
+            // 预编辑已固定关闭：取消时不必再撤组合态
             setHint(getString(R.string.hint_cancelled))
         }
     }
@@ -4736,11 +4787,12 @@ class JinnIme : InputMethodService() {
         }
 
         // 服务端给的是整段累积文本，直接整体覆盖，不要自己再拼
-        val text = if (prefs.stripTrailingPunc) stripTrailingPunc(message.text) else message.text
+        // 「去句尾标点」已固定生效（开关与界面 2026-11-17 删除）
+        val text = stripTrailingPunc(message.text)
 
         if (!message.isFinal) {
-            if (prefs.useComposing) connection.setComposingText(text, 1)
-            if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "handleResult: 预编辑回显 ${message.duration.toInt()}s \"${text.take(40)}\"")
+            // 预编辑回显已固定关闭（开关与界面 2026-11-17 删除）：非最终结果只更新状态条
+            if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "handleResult: 中途结果 ${message.duration.toInt()}s \"${text.take(40)}\"")
             setHint(getString(R.string.hint_progress, message.duration.toInt()))
             return
         }
@@ -4751,13 +4803,25 @@ class JinnIme : InputMethodService() {
         ui.removeCallbacks(recognizeTimeout)
         // 只记字数不记正文：日志文件落在外部存储，且会随「导出诊断包」整体外发
         Diagnostics.i(TAG, "handleResult: 最终结果 共${message.text.length}字")
-        if (prefs.useComposing) {
-            connection.setComposingText(text, 1)
-            connection.finishComposingText()
-        } else {
-            connection.commitText(text, 1)
-        }
+        connection.commitText(text, 1)
         setHint(getString(if (text.isBlank()) R.string.hint_empty else R.string.hint_done))
+        // 自动续说：会话还在、且没有新的一轮在录（用户可能已自己点开），就接着录下一句。
+        // 一次性提交完成后才接（避免与 commitText 抢同一个组合态）；键盘已收起就收会话。
+        if (dictationSession) {
+            if (!isInputViewShown) {
+                Diagnostics.i(TAG, "连续口述: 键盘已收起，收会话")
+                dictationSession = false
+                ui.removeCallbacks(dictationIdleStop)
+            } else if (text.isBlank()) {
+                // 一句都没识别出来：不再接下一轮，否则会一直空转
+                dictationSession = false
+                ui.removeCallbacks(dictationIdleStop)
+            } else if (mode == Mode.NONE) {
+                Diagnostics.i(TAG, "连续口述: 上屏完成，自动接下一轮")
+                startRecording(Mode.TOGGLE)
+                if (mode == Mode.TOGGLE) armDictationIdle() else dictationSession = false
+            }
+        }
     }
 
     /** 对齐桌面端 trash_punc：句尾的逗号句号在聊天场景里更像噪音 */
@@ -6632,6 +6696,15 @@ class JinnIme : InputMethodService() {
          * 5 分钟已经远超正常口述段落，再长就该换成分段提交。
          */
         const val MAX_TOGGLE_MS = 300_000L
+
+    /** 连续口述的静音闸门（自动续说那一轮）：这么久没人声就收会话 */
+    const val DICTATION_IDLE_MS = 10_000L
+
+    /** 首轮的静音闸门放宽一档：用户刚点完键，还要开口 */
+    const val DICTATION_FIRST_IDLE_MS = 20_000L
+
+    /** 判「有人声」的电平门限（0..1，MicRecorder 的归一化值） */
+    const val DICTATION_VOICE_LEVEL = 0.35f
 
         /**
          * 在线后端的单次听写上限：两家单次音频硬上限都是 60 秒，留 2 秒给末帧 / 上传与最终结果。
