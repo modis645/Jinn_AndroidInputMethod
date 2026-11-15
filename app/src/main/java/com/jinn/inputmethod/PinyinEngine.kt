@@ -2578,7 +2578,7 @@ object PinyinEngine {
                 // 快筛：自造词键的首字母串必须对上投影串（与内置词同一判据，先挡掉绝大多数）
                 if (!initialLettersOf(key).let { it == null || !it.startsWith(projectionLetters) }) continue
                 if (!matchesSegments(key, segs)) continue
-                val ranked = UserFrequency.rank(list.map { it.word }) { toSimplified(it) }
+                val ranked = UserFrequency.rank(list.map { it.word }.toTypedArray()) { toSimplified(it) }
                 for (w in displayTake(ranked.asList(), MAX_PHRASES)) {
                     if (out.size >= ABBREV_MAX_WORDS) return
                     if (!seen.add(w)) continue
