@@ -227,7 +227,9 @@ class SettingsActivity : ComponentActivity() {
         // 否则键盘功能面板里还会出现一个无处配置的「翻译」键
         prefs.translateEnabled = false
 
-        spinnerShuangpin = findViewById(R.id.spinner_shuangpin)
+        // 「拼音输入方案」卡 2026-11-15 已整卡删除（用户只留全拼，双拼/键面韵母一并下线）：
+        // 控件在代码里保留为 stub，读写逻辑（useShuangpin=false 强制全拼）不变。
+        spinnerShuangpin = UserAwareSpinner(this)
 
         btnEnable = findViewById(R.id.btn_enable)
         btnPick = findViewById(R.id.btn_pick)
