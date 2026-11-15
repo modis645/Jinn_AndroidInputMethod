@@ -34,10 +34,10 @@ internal object LocalAsrModel {
      */
     private const val VAD_PATH = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx"
     val VAD_URLS: List<String> = listOf(
-        VAD_URL,
         "https://ghfast.top/$VAD_PATH",
         "https://ghproxy.net/$VAD_PATH",
         "https://hub.gitmirror.com/$VAD_PATH",
+        VAD_URL,
     )
     const val MODEL_FILE = "model.int8.onnx"
     const val TOKENS_FILE = "tokens.txt"
@@ -53,10 +53,10 @@ internal object LocalAsrModel {
         "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/" +
             "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09.tar.bz2"
     val ARCHIVE_URLS: List<String> = listOf(
-        ARCHIVE_URL,
         "https://ghfast.top/$ARCHIVE_PATH",
         "https://ghproxy.net/$ARCHIVE_PATH",
         "https://hub.gitmirror.com/$ARCHIVE_PATH",
+        ARCHIVE_URL,
     )
 
     fun dir(context: Context): File = File(context.filesDir, DIR_NAME).apply { mkdirs() }
