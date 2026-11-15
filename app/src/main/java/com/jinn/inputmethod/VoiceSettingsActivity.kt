@@ -760,8 +760,8 @@ class VoiceSettingsActivity : ComponentActivity() {
         cardAzureCredentials.visibility = if (enabled && backend == VoiceBackend.AZURE) View.VISIBLE else View.GONE
         cardBaiduCredentials.visibility = if (enabled && backend == VoiceBackend.BAIDU) View.VISIBLE else View.GONE
         cardDeepgramCredentials.visibility = if (enabled && backend == VoiceBackend.DEEPGRAM) View.VISIBLE else View.GONE
-        cardLocalAsr.visibility = if (enabled && backend == VoiceBackend.LOCAL) View.VISIBLE else View.GONE
-        if (enabled && backend == VoiceBackend.LOCAL) refreshLocalAsrStatus()
+        cardLocalAsr.visibility = if (backend == VoiceBackend.LOCAL) View.VISIBLE else View.GONE
+        if (backend == VoiceBackend.LOCAL) refreshLocalAsrStatus()
     }
 
     /**
