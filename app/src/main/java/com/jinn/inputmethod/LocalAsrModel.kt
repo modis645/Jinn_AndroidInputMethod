@@ -37,12 +37,16 @@ internal object LocalAsrModel {
      *
      * 2026-11-15 对照沙鸥（msime）确认：同一台手机上官方直连是通的，先试代理反而会被
      * 代理回的网页/超时拖住，整体表现成「连不上」。代理只在前面的官方源失败时才用。
+     *
+     * 顺带实测了几家加速站（同一文件，本机直连）：gh-proxy.com、ghproxy.net 正常返回
+     * 163,002,883 字节的 octet-stream；ghfast.top 回 403；hub.gitmirror.com 域名已失效
+     * ⇒ 死掉的删掉，能用的按可用性排在官方后面。
      */
     val VAD_URLS: List<String> = listOf(
         VAD_PATH,
-        "https://ghfast.top/$VAD_PATH",
+        "https://gh-proxy.com/$VAD_PATH",
         "https://ghproxy.net/$VAD_PATH",
-        "https://hub.gitmirror.com/$VAD_PATH",
+        "https://ghfast.top/$VAD_PATH",
     )
 
     const val MODEL_FILE = "model.int8.onnx"
@@ -77,9 +81,9 @@ internal object LocalAsrModel {
      */
     val ARCHIVE_URLS: List<String> = listOf(
         ARCHIVE_PATH,
-        "https://ghfast.top/$ARCHIVE_PATH",
+        "https://gh-proxy.com/$ARCHIVE_PATH",
         "https://ghproxy.net/$ARCHIVE_PATH",
-        "https://hub.gitmirror.com/$ARCHIVE_PATH",
+        "https://ghfast.top/$ARCHIVE_PATH",
     )
 
     fun dir(context: Context): File = File(context.filesDir, DIR_NAME).apply { mkdirs() }
