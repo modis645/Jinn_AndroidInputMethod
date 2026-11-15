@@ -40,6 +40,8 @@ import kotlin.math.roundToInt
 private const val TEXT_VOICE_KEY_IDLE = "语音"
 private const val TEXT_VOICE_KEY_LISTEN = "聆听中"
 private const val TEXT_VOICE_KEY_CANCEL = "松开取消"
+/** 连续录音中的键面动词：`结束 0:07`（点一下就是结束） */
+private const val TEXT_VOICE_KEY_STOP = "结束"
 private const val TEXT_SHIFT_SPLIT = "分词"
 private const val TEXT_SHIFT_UPPER = "大写"
 
@@ -112,6 +114,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
         /** 长按录音结束；`cancelled = true` 时丢弃本次结果（含手势被系统收走） */
         fun onVoiceHoldEnd(cancelled: Boolean) = Unit
+
+        /**
+         * 单击「语音」键：进入 / 退出**连续录音**（点一下开录、再点一下结束，中途不松手也照录）。
+         *
+         * 返回 true = 这一刻**已进入**录音（视图据此切键面为 `结束 m:ss` 并起秒表）。
+         * false 覆盖两种情况：本次是「结束」动作（键面回待机），或没开始（未开启 / 无权限 /
+         * 密码框 / 已在录）—— 失败那几条由 IME 自己出声提示。
+         */
+        fun onVoiceToggle(): Boolean = false
 
         /**
          * 空格按下瞬间的预热：提前建连。
@@ -881,6 +892,20 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 长按起点（rawY）与是否已跨过取消阈值；rawY 用屏幕坐标，不受键盘自身位移影响 */
     private var voiceHoldDownRawY = 0f
     private var voiceHoldCancelArmed = false
+
+    /**
+     * 连续录音（单击语音键开始）是否在录。**只影响键面**：真状态在 `JinnIme.mode`，
+     * 视图靠 [setVoiceToggleState] 被通报，不自己猜（录音可能被外部终止，视图也可能重建）。
+     */
+    private var voiceToggleActive = false
+    private var voiceToggleStartedAt = 0L
+    private val voiceToggleTicker = object : Runnable {
+        override fun run() {
+            if (!voiceToggleActive) return
+            updateSpaceHint()
+            postDelayed(this, 1000L)
+        }
+    }
 
     private val btnBackspace: View
     private val btnEnter: View
@@ -1969,21 +1994,20 @@ class PinyinKeyboardView @JvmOverloads constructor(
             }
             true
         }
-        // 长语音键：按住就说，与空格长按共用同一条录音链路（这里不消费「短按」，短按无动作）。
+        // 长语音键（2026-11-16 用户定稿）：**单击 = 连续录音开关**，**长按 = 按住说**。
+        //  - 单击：点一下开始录、再点一下结束（`Mode.TOGGLE`，语音键盘页麦克风同款状态机）；
+        //  - 长按：仍走「按住说、松手转文字」（`Mode.HOLD`），上滑取消照旧。
+        // 触摸监听**只观察不消费**（恒返回 false）：短按的 click 与长按识别都归框架，
+        // 这里只记起点、转发上滑、松手收尾 —— 写法与空格键完全一致（那边注释更细）。
+        // ⚠ 长按那次也会走完 DOWN→UP，但因为 onLongClick 返回 true，框架不再派发 click
+        //   ⇒ 不会出现「按完长按又触发一次连续录音」的双跳。
         btnVoiceLong.setOnTouchListener { _, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     voiceHoldDownRawY = event.rawY
+                    // 只复位**长按**那套键面：连续录音的键面归 IME 通报，别在这里抹掉
                     cancelVoiceHold()
                     listener?.onVoicePrepare()
-                    if (listener?.canVoice() == true) {
-                        KeyFeedback.fire(TapSound.G_CONFIRM)
-                        if (listener?.onVoiceHoldStart() == true) {
-                            voiceHoldActive = true
-                            voiceHoldCancelArmed = false
-                            updateSpaceHint()
-                        }
-                    }
                 }
 
                 MotionEvent.ACTION_MOVE -> if (voiceHoldActive) {
@@ -2000,6 +2024,21 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
                 MotionEvent.ACTION_CANCEL ->
                     if (voiceHoldActive) endVoiceHold(cancelled = true)
+            }
+            false
+        }
+        btnVoiceLong.setOnClickListener {
+            KeyFeedback.fire(TapSound.G_CONFIRM)
+            setVoiceToggleState(listener?.onVoiceToggle() == true)
+        }
+        btnVoiceLong.setOnLongClickListener {
+            // 不可用 ⇒ 不消费：交回短按路径去出声（IME 那条 click 分支会提示并转设置页）
+            if (listener?.canVoice() != true) return@setOnLongClickListener false
+            KeyFeedback.fire(TapSound.G_CONFIRM)
+            if (listener?.onVoiceHoldStart() == true) {
+                voiceHoldActive = true
+                voiceHoldCancelArmed = false
+                updateSpaceHint()
             }
             true
         }
@@ -2029,7 +2068,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
     internal fun isSessionPristine(): Boolean =
         composing.isEmpty() && lastPredictions.isEmpty() && !directionPanelVisible &&
             !clipboardActive && !galleryActive && !actionPanelExpanded &&
-            !passwordPad && !isPanelSearch() && !voiceHoldActive && !voiceHoldCancelArmed
+            !passwordPad && !isPanelSearch() && !voiceHoldActive && !voiceHoldCancelArmed &&
+            !voiceToggleActive
 
     /** 大写锁定态（重建重放用；字段 private，不能直接读） */
     fun capsModeForReplay(): Boolean = capsMode
@@ -4984,11 +5024,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 长语音键：录音中键面写「聆听中」，上滑到取消区写「松开取消」。
         // 用户看不到录音过程，只能靠键面知道「还在收」还是「要取消」（2026-11-16 需求）。
         btnVoiceLabel?.text = when {
+            voiceToggleActive -> voiceToggleLabel()
             !voiceHoldActive -> TEXT_VOICE_KEY_IDLE
             voiceHoldCancelArmed -> TEXT_VOICE_KEY_CANCEL
             else -> TEXT_VOICE_KEY_LISTEN
         }
-        if (!voiceHoldActive) setVoiceLevel(0f)
+        if (!voiceHoldActive && !voiceToggleActive) setVoiceLevel(0f)
         // 英文键盘没有子 TextView，`key_space` 自己就是文本：同一枚角标挂它身上
         (btnSpace as? TextView)?.let {
             it.compoundDrawablePadding = (3f * resources.displayMetrics.density).toInt()
@@ -5002,7 +5043,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 只在长按态生效：没在录音时这条必须是空的，否则「键盘自己在录音」的观感会误导用户。
      */
     fun updateVoiceLevel(level: Float) {
-        if (!voiceHoldActive) return
+        // 长按与连续录音都要动这条电平：它是「收音还在继续」的唯一实证（用户 2026-11-16）
+        if (!voiceHoldActive && !voiceToggleActive) return
         setVoiceLevel(level)
     }
 
@@ -5039,6 +5081,44 @@ class PinyinKeyboardView @JvmOverloads constructor(
         voiceHoldActive = false
         voiceHoldCancelArmed = false
         updateSpaceHint()
+    }
+
+    /**
+     * IME 通报「连续录音」的开关（[Listener.onVoiceToggle] 的返回、以及 `startRecording` /
+     * `stopRecording` 两条权威路径都走它）。
+     *
+     * 视图不自己判：录音可能被外部终止（录音器报错 / 焦点被抢 / 换输入框），也可能在**视图重建之后**
+     * 才由 IME 开始（换肤重建）—— 只有 IME 的 `mode` 是权威，这里只负责把键面对齐。
+     * 幂等；重复置真时刷一次文案（秒表继续走，不重置起点）。
+     */
+    fun setVoiceToggleState(active: Boolean) {
+        if (voiceToggleActive == active) {
+            if (active) updateSpaceHint()
+            return
+        }
+        voiceToggleActive = active
+        removeCallbacks(voiceToggleTicker)
+        if (active) {
+            voiceToggleStartedAt = android.os.SystemClock.uptimeMillis()
+            post(voiceToggleTicker)
+        }
+        updateSpaceHint()
+    }
+
+    /** 连续录音键面复位（`stopRecording` 侧调用；幂等、不回调 Listener） */
+    fun cancelVoiceToggle() = setVoiceToggleState(false)
+
+    /**
+     * 连续录音的键面文案：`结束 0:07`。
+     *
+     * 只显示**已录时长**、不做倒计时 —— 用户要的信息是「还在录、录了多久」，倒计时只会让人紧张；
+     * 到点自动收尾由 IME 负责（见 `JinnIme.autoStopDelayMs`）。手写补零，避免 `Locale` 依赖。
+     */
+    private fun voiceToggleLabel(): String {
+        val sec = ((android.os.SystemClock.uptimeMillis() - voiceToggleStartedAt) / 1000L).coerceAtLeast(0L)
+        val mm = sec / 60L
+        val ss = sec % 60L
+        return TEXT_VOICE_KEY_STOP + " " + mm + ":" + (if (ss < 10L) "0$ss" else "$ss")
     }
 
     /**
