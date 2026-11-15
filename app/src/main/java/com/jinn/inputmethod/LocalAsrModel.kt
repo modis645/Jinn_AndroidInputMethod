@@ -20,6 +20,19 @@ internal object LocalAsrModel {
     const val DIR_NAME = "local-asr"
 
     /**
+     * 自建 CDN 镜像（2026-11-15）：与 GitHub 上是**同一个字节流**（本机下载后 sha256 核对
+     * `7d1efa…` 一致），只是换成国内直达的存储。
+     *
+     * 为什么需要它：真机上 github.com 的域名解析/连接经常不动（用户两次反馈「长时间没反应」，
+     * 而同一台手机上沙鸥的下载很快），加速站又时好时坏（实测 ghfast.top 回 403、
+     * hub.gitmirror.com 域名已失效）。把自己核过的整包放到国内 CDN 上，是唯一不依赖
+     * GitHub 可达性的通路；sha256 校验仍然照做，内容不对就自动换下一个源。
+     */
+    private const val CDN_ARCHIVE_URL = "https://aka.doubaocdn.com/s/2S62KwDwWM"
+    private const val CDN_VAD_URL = "https://aka.doubaocdn.com/s/t4hRxSVfJj"
+
+
+    /**
      * silero VAD 模型（约 2 MB）：只用于**长句自动分句**，缺了不影响识别 ——
      * 没有它时长句整段解码，有它就按静音切开逐句解码再拼回去（见 LocalSenseVoiceClient）。
      */
@@ -68,18 +81,6 @@ internal object LocalAsrModel {
     /** 归档的官方字节数与摘要（用于「代理返回网页 / 截断」的判定） */
     const val ARCHIVE_SIZE = 163_002_883L
     const val ARCHIVE_SHA256 = "7d1efa2138a65b0b488df37f8b89e3d91a60676e416f515b952358d83dfd347e"
-
-    /**
-     * 自建 CDN 镜像（2026-11-15）：与 GitHub 上是**同一个字节流**（本机下载后 sha256 核对
-     * `7d1efa…` 一致），只是换成国内直达的存储。
-     *
-     * 为什么需要它：真机上 github.com 的域名解析/连接经常不动（用户两次反馈「长时间没反应」，
-     * 而同一台手机上沙鸥的下载很快），加速站又时好时坏（实测 ghfast.top 回 403、
-     * hub.gitmirror.com 域名已失效）。把自己核过的整包放到国内 CDN 上，是唯一不依赖
-     * GitHub 可达性的通路；sha256 校验仍然照做，内容不对就自动换下一个源。
-     */
-    private const val CDN_ARCHIVE_URL = "https://aka.doubaocdn.com/s/2S62KwDwWM"
-    private const val CDN_VAD_URL = "https://aka.doubaocdn.com/s/t4hRxSVfJj"
 
     /** 低于这个字节数一律判为「拿到的不是模型」（留 5% 余量给不同 CDN 的等同文件） */
     const val ARCHIVE_MIN_BYTES = (ARCHIVE_SIZE * 95 / 100)
