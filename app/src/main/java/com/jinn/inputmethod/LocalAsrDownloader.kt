@@ -123,46 +123,69 @@ internal object LocalAsrDownloader {
                 tmpDir.deleteRecursively()
                 tmpDir.mkdirs()
 
-                // ── 1. 下载 ──
-                val request = Request.Builder().url(LocalAsrModel.ARCHIVE_URL).build()
-                val executing = http.newCall(request)
-                call = executing
-                executing.execute().use { response ->
-                    if (!response.isSuccessful) {
-                        reason = "下载失败：HTTP ${response.code}"
-                        return@use
+                // ── 1. 下载（按镜像清单逐个试，第一个成功的留下）──
+                var lastError: String? = null
+                for ((index, url) in LocalAsrModel.ARCHIVE_URLS.withIndex()) {
+                    if (cancelled) {
+                        reason = "已取消"
+                        break
                     }
-                    val body = response.body ?: run {
-                        reason = "下载失败：响应为空"
-                        return@use
-                    }
-                    val total = body.contentLength()
-                    var read = 0L
-                    body.byteStream().use { input ->
-                        archive.outputStream().use { output ->
-                            val buf = ByteArray(64 * 1024)
-                            while (true) {
-                                if (cancelled) {
-                                    reason = "已取消"
-                                    return@use
-                                }
-                                val n = input.read(buf)
-                                if (n <= 0) break
-                                output.write(buf, 0, n)
-                                read += n
-                                if (total > 0) {
-                                    val pct = (read * PROGRESS_DOWNLOAD_DONE / total).toInt()
-                                    onProgress(pct.coerceIn(0, PROGRESS_DOWNLOAD_DONE))
+                    archive.delete()
+                    if (index > 0) onProgress(0)
+                    val request = Request.Builder().url(url).build()
+                    val executing = http.newCall(request)
+                    call = executing
+                    var got = 0L
+                    try {
+                        executing.execute().use { response ->
+                            if (!response.isSuccessful) {
+                                lastError = "HTTP ${response.code}"
+                                return@use
+                            }
+                            val body = response.body ?: run {
+                                lastError = "响应为空"
+                                return@use
+                            }
+                            val total = body.contentLength()
+                            body.byteStream().use { input ->
+                                archive.outputStream().use { output ->
+                                    val buf = ByteArray(64 * 1024)
+                                    while (true) {
+                                        if (cancelled) {
+                                            lastError = "已取消"
+                                            return@use
+                                        }
+                                        val n = input.read(buf)
+                                        if (n <= 0) break
+                                        output.write(buf, 0, n)
+                                        got += n
+                                        if (total > 0) {
+                                            val pct = (got * PROGRESS_DOWNLOAD_DONE / total).toInt()
+                                            onProgress(pct.coerceIn(0, PROGRESS_DOWNLOAD_DONE))
+                                        }
+                                    }
                                 }
                             }
                         }
+                    } catch (e: Exception) {
+                        lastError = e.message ?: "连接失败"
+                    } finally {
+                        call = null
                     }
-                    if (read <= 0L) reason = "下载失败：没有收到数据"
+                    if (got > 0L) {
+                        lastError = null
+                        break
+                    }
+                    if (cancelled) break
                 }
-                call = null
-                if (reason != null) {
+                if (cancelled) {
                     archive.delete()
-                    onDone(false, reason)
+                    onDone(false, "已取消")
+                    return@Thread
+                }
+                if (lastError != null || !archive.exists() || archive.length() <= 0L) {
+                    archive.delete()
+                    onDone(false, "下载失败：${lastError ?: "没有收到数据"}（已试过 ${LocalAsrModel.ARCHIVE_URLS.size} 个下载地址）")
                     return@Thread
                 }
 
