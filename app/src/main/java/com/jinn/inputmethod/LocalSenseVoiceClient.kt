@@ -138,6 +138,21 @@ internal class LocalSenseVoiceClient(
             val builder = StringBuilder()
             var pieces = 0
             var coveredSamples = 0L
+            // ── 段首能量回补（用户 2026-11-16：「长录音丢句首 1~4 字」）──
+            // VAD 按阈值切起点，软起音（气声、轻声、连读的首字）常被判成静音 ⇒ 整句第一个字消失。
+            // 沙鸥（msime shared/voice/LocalAsr.cpp + note 2026-10-28-local-asr-vad-onset）的做法：
+            // 10ms 帧 RMS、噪声底取帧能量的第 10 百分位、高出底噪 12dB 视为语音、允许 0.25s 低能量
+            // 间隙、再往前最多回补 3s、且不得早于上一段段尾。这里逐项照搬。
+            val frameRms = frameEnergies(samples)
+            val noiseFloor = if (frameRms.isEmpty()) {
+                0f
+            } else {
+                // 第 10 百分位；再兜一个绝对下限，避免整段静音时噪声底为 0 把一切都判成语音
+                val sorted = frameRms.sortedArray()
+                maxOf(sorted[(sorted.size - 1) / 10], 1e-5f)
+            }
+            val speechRms = noiseFloor * 3.981f // +12dB = 10^(12/20)
+            var prevEnd = 0
             synchronized(lock) {
                 try {
                     vad.acceptWaveform(samples)
@@ -146,16 +161,28 @@ internal class LocalSenseVoiceClient(
                         val segment = vad.front()
                         // 太短的片段（<0.2s）多半是噪声，交给模型只会得到一两个错字
                         if (segment.samples.size >= SAMPLE_RATE / 5) {
-                            coveredSamples += segment.samples.size
+                            val segStart = segment.start.coerceIn(0, samples.size)
+                            val segEnd = (segStart + segment.samples.size).coerceAtMost(samples.size)
+                            // 段首回补：往前多带 0.3~3 秒的「疑似语音」头，宁可让模型多听一点静音
+                            val padStart = onsetBacktrack(frameRms, speechRms, segStart, prevEnd)
+                            val slice = if (padStart in 1 until segStart && segEnd > padStart) {
+                                samples.copyOfRange(padStart, segEnd)
+                            } else {
+                                segment.samples
+                            }
+                            coveredSamples += kotlin.math.min(slice.size.toLong(), samples.size.toLong())
+                            prevEnd = maxOf(prevEnd, segEnd)
                             val stream = recognizer.createStream()
                             try {
-                                stream.acceptWaveform(segment.samples, SAMPLE_RATE)
+                                stream.acceptWaveform(slice, SAMPLE_RATE)
                                 recognizer.decode(stream)
                                 builder.append(recognizer.getResult(stream).text)
                                 pieces++
                             } finally {
                                 stream.release()
                             }
+                        } else {
+                            prevEnd = maxOf(prevEnd, (segment.start + segment.samples.size).coerceAtMost(samples.size))
                         }
                         vad.pop()
                     }
@@ -179,6 +206,53 @@ internal class LocalSenseVoiceClient(
             else builder.toString()
         }.getOrNull()
 
+    /** 10ms 一帧的 RMS（0..1，float 域）；不足一帧的尾巴丢掉（对回补判据无影响） */
+    private fun frameEnergies(samples: FloatArray): FloatArray {
+        val frame = SAMPLE_RATE / 100
+        if (frame <= 0 || samples.size < frame) return FloatArray(0)
+        val count = samples.size / frame
+        val out = FloatArray(count)
+        for (f in 0 until count) {
+            var sum = 0.0
+            val base = f * frame
+            for (j in 0 until frame) {
+                val v = samples[base + j]
+                sum += v * v
+            }
+            out[f] = kotlin.math.sqrt(sum / frame).toFloat()
+        }
+        return out
+    }
+
+    /**
+     * 段首回推到第几帧（返回采样下标）。
+     *
+     * [floorSample] = 上一段的段尾：两段音频绝不重叠，否则同一句话会被解码两遍、上屏两次。
+     * 规则与沙鸥逐项对齐：先无条件往前 0.3 秒（气声没有能量但确属语音），之后沿「语音帧」继续走，
+     * 途中允许最多 0.25 秒的低能量间隙，总回补不超过 3 秒。
+     */
+    private fun onsetBacktrack(frameRms: FloatArray, speechRms: Float, segStart: Int, floorSample: Int): Int {
+        val frame = SAMPLE_RATE / 100
+        if (frame <= 0 || frameRms.isEmpty()) return segStart
+        val startFrame = (segStart / frame).coerceIn(0, frameRms.size)
+        val floorFrame = (floorSample / frame).coerceAtLeast(0)
+        var idx = startFrame
+        var steps = 0
+        var gap = 0
+        while (idx > floorFrame && idx > 0 && steps <= ONSET_MAX_BACK_FRAMES) {
+            val loud = frameRms[idx - 1] >= speechRms
+            when {
+                steps < ONSET_ALWAYS_FRAMES -> Unit          // 无条件补的 0.3 秒
+                loud -> gap = 0                              // 语音继续，间隙清零
+                gap < ONSET_GAP_FRAMES -> gap++               // 低能量但还在容忍窗口内
+                else -> break                                // 彻底掉出语音段，停
+            }
+            idx--
+            steps++
+        }
+        return idx * frame
+    }
+
     /** PCM16（小端）→ float32 归一化到 [-1,1]；逐采样 1/32768 换算，不做重采样（采集端已是 16k） */
     private fun pcm16ToFloat(pcm16: ByteArray): FloatArray {
         val frames = pcm16.size / 2
@@ -200,6 +274,15 @@ internal class LocalSenseVoiceClient(
 
     private companion object {
         const val SAMPLE_RATE = 16_000
+
+        /** 段首无条件回补的帧数（0.3s × 100 帧/秒） */
+        const val ONSET_ALWAYS_FRAMES = 30
+
+        /** 回补途中容忍的低能量间隙（0.25s） */
+        const val ONSET_GAP_FRAMES = 25
+
+        /** 单段最多回补多少帧（3s），防止一口气把整段话都吞进来 */
+        const val ONSET_MAX_BACK_FRAMES = 300
 
         /** 低于这个长度（约 4 秒）不值得走 VAD：切出来的句子和整段解码差别不大 */
         const val MIN_VAD_SAMPLES = 4 * SAMPLE_RATE
