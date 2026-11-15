@@ -608,6 +608,9 @@ object PinyinEngine {
             UserFrequency.load(context, prefs.userLearning)
             // 选择台账（只追加的词库原料）：默认关，开关由用户在说明弹框里手输 OK 打开
             SelectionLedger.init(context, prefs.userDictEnabled)
+            // 自造词参与候选（2026-11-15）：台账此前只记不用，用户自己造的词永远是「死记录」
+            runCatching { loadUserWords(context) }
+                .onFailure { Diagnostics.w(TAG, "自造词装载失败: ${it.javaClass.simpleName}") }
 
             // 单段加载：2026-09-27 起源改为「第 1 部分」短语库（xz 2.1MB / 29.9 万键），
             // 解压 + 解析约 0.5~0.7s，原「高频子集先行」的两段式与 hot 资产一并退场。
@@ -1882,6 +1885,59 @@ object PinyinEngine {
         return null
     }
 
+    // ── 用户自造词（选择台账）参与候选 ──────────────────────────────────────
+    //
+    // 用户 2026-11-15 问「全拼输入刘志武，词库不会收入」并追问入选标准：查下来发现
+    // 台账此前**只记不用** —— 词写进了 `user_sel.txt`，但 `query()` 只从内置词库取词，
+    // 于是自造词永远排不到候选行里，用户视角就是「记了也没用」。这里把台账接进查询：
+    // 键是「拼起来的全拼音节」（`liuzhiwu`），值是词与音节数。
+    //
+    // 只用**有读音**的条目：台账里手动导入的词可能没有读音，无法与输入键对上，
+    // 那种词只保留在词库页面，不参与候选。
+
+    /** 一个自造词：词面 + 音节数（音节数用于候选分组，与内置词同一口径） */
+    private class UserWord(val word: String, val syllables: Int)
+
+    /** 拼音键（无分隔符、小写）→ 自造词列表。装好后只读，落盘由 SelectionLedger 负责 */
+    private val userWords = java.util.concurrent.ConcurrentHashMap<String, MutableList<UserWord>>()
+
+    /**
+     * 从选择台账装载自造词（引擎加载路径上调用；后台线程）。
+     *
+     * 解不开（密钥不可用）时静默跳过：那一条路径已经由台账自己留痕，
+     * 这里再喊一次只会把日志刷满，候选也不会因为缺一份自造词就不可用。
+     */
+    fun loadUserWords(context: Context) {
+        val read = SelectionLedger.readAll(context)
+        if (read !is SelectionLedger.LedgerRead.Ok) {
+            Diagnostics.w(TAG, "自造词装载跳过：台账不可读")
+            return
+        }
+        userWords.clear()
+        var n = 0
+        for ((word, pinyin) in read.picks) {
+            if (addUserWord(word, pinyin)) n++
+        }
+        Diagnostics.i(TAG, "自造词装载完成: 参与候选 ${userWords.size} 键 / $n 条")
+    }
+
+    /** 记一条自造词（台账写入后立即生效，不必等下次启动） */
+    fun noteUserWord(word: String, pinyin: String): Boolean = addUserWord(word, pinyin)
+
+    private fun addUserWord(word: String, pinyin: String): Boolean {
+        if (word.isEmpty() || pinyin.isEmpty()) return false
+        val syllables = pinyin.split(' ').filter { it.isNotBlank() }
+        // 词面字数与音节数必须对齐：不对齐的条目（旧版截断读音）不进候选，
+        // 否则会出现「打 3 个音节出来一个 2 字词」这种无解候选
+        if (syllables.isEmpty() || syllables.size != word.length) return false
+        val key = syllables.joinToString("").lowercase(java.util.Locale.ROOT)
+            .replace(SEPARATOR_CHAR.toString(), "")
+        val list = userWords.getOrPut(key) { java.util.Collections.synchronizedList(java.util.ArrayList<UserWord>()) }
+        val simplified = toSimplified(word)
+        if (list.none { it.word == simplified }) list.add(UserWord(simplified, syllables.size))
+        return true
+    }
+
     /**
      * 内置词库里是否**已经有**这个词（含单字表）。
      *
@@ -2469,6 +2525,16 @@ object PinyinEngine {
      * 截断若在重排之前，学过的长尾词（原序 13 名之后）永远进不了候选，末尾的
      * [UserFrequency.rank] 也就无从置顶。
      */
+    /** 把一条自造词放进候选池（保持插入序 = 排在最前）；已有同名候选时不重复添加 */
+    private fun putUserWord(
+        words: MutableSet<String>,
+        syllableCounts: MutableMap<String, Int>,
+        word: String,
+        syllables: Int,
+    ) {
+        if (words.add(word)) syllableCounts[word] = syllables
+    }
+
     fun query(input: String): Result {
         if (!loaded) return Result(emptyList(), emptyList(), "")
         // 输入里的用户分隔符（`'`）只参与切分，不参与查词：raw 去掉它才是词库键
@@ -2495,6 +2561,16 @@ object PinyinEngine {
             allSyllables.take(MAX_SYLLABLES)
         } else {
             allSyllables
+        }
+
+        // 1b. 用户自造词：整串拼音精确命中就最先入池。
+        // 位置必须在词库词之前 —— 用户特意造出来的词，优先级按定义高于内置词；
+        // 放在单字之后则会被首屏单字挤掉（用户要的是「打 liuzhiwu 就看见刘志武」）。
+        val userHits = userWords[raw]
+        if (!userHits.isNullOrEmpty()) {
+            for (uw in userHits) {
+                putUserWord(words, syllableCounts, uw.word, uw.syllables)
+            }
         }
 
         // 2. 从最长音节数逐级递减：先整词，再逐级到单字（对齐 AOSP while(lma_size>0)）
