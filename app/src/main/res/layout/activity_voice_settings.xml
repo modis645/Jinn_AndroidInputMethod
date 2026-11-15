@@ -31,12 +31,6 @@
             android:id="@+id/btn_voice_close" />
     </LinearLayout>
 
-    <TextView
-        style="@style/PageDesc"
-        android:id="@+id/text_voice_desc"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content" />
-
     <!-- 保存并重启：置顶，写 Prefs 后重启输入法进程（与设置页同一套 ImeRestart）。
          只有「要按保存才写」的项（总开关 / 地址 / 端口 / 语言 / 提示词）靠它落盘；
          三个勾选框与默认键盘样式是改动即写，文案已如实说明（TEXT_DESC）。 -->
