@@ -2039,8 +2039,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 选择台账：只追加「词 + 读音」，一行一次（与词频表分开，互不覆盖）。
         // 词按**简体**归一键（与 UserFrequency.rememberChoice 同口径）：繁体模式下同一词不会繁简两份计数
         recordLedgerIfNew(word, pinyin)
-        // 逐字上屏的自造词：单字连打时拼起来，凑够一个名字/术语就收词（见 runWord 说明）
-        accumulateRun(word, pinyin)
         PinyinEngine.rememberChoice(word)
     }
 
@@ -2061,21 +2059,29 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /**
      * 累积「逐字上屏」的自造词（规则见 [runWord]）。
      *
+     * 关键判据是 [residual]：**拼音串提交后还有剩余**，才说明这几个字是用户从同一个长串里
+     * 一个一个挑出来的（`liuzhiwu` 挑「刘」还剩 `zhiwu`）。空格连打常用字（`wo` 空格 → 我、
+     * `ai` 空格 → 爱）每次都是独立的一个串 —— 那种必须不收，否则「我爱」「我今天」这类
+     * 顺手拼出来的碎片会把词库塞满（用户 2026-11-15 抓到「空格键却存入了用户词库」）。
+     *
      * 多字词一出现就结算并清空：用户选了一个现成的词，前面积累的单字就不再是同一个词。
      */
-    private fun accumulateRun(word: String, pinyin: String) {
-        val now = System.currentTimeMillis()
+    private fun noteRunChar(word: String, pinyin: String, residual: Boolean) {
         if (word.length != 1) {
             flushRun()
             return
         }
+        val now = System.currentTimeMillis()
         if (runWord.isNotEmpty() && now - runLastAt > RUN_GAP_MS) flushRun()
+        // 一个独立的拼音串（提交后整串正好用完）不开启新词：单字上屏是输入常态，不是造词
+        if (runWord.isEmpty() && !residual) return
         runWord.append(word)
         if (pinyin.isNotEmpty()) {
             if (runPinyin.isEmpty()) runPinyin.append(pinyin) else runPinyin.append(' ').append(pinyin)
         }
         runLastAt = now
-        if (runWord.length >= RUN_MAX_CHARS) flushRun()
+        // 残码用尽（这一串的最后一个字）或撞到上限：结算
+        if (!residual || runWord.length >= RUN_MAX_CHARS) flushRun()
     }
 
     /**
@@ -3095,7 +3101,9 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "空格取首候选: \"$first\" (拼音=${composing})")
                 learnChoice(first)                      // 空格取首候选同样是明确选择
                 listener?.onCommitText(first)
-                if (consumePinyin(first)) {
+                val spaceAll = consumePinyin(first)
+                noteRunChar(first, PinyinEngine.truePinyinOf(first).orEmpty(), residual = !spaceAll)
+                if (spaceAll) {
                     // 空格上屏同样触发智能预测（与点选候选一致）
                     lastCommittedWord = first
                     lastPredictions = if (predictionsEnabled()) PinyinEngine.predict(first) else emptyList()
@@ -4513,7 +4521,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
         learnChoice(candidate)          // 用户词频：这是**明确选择**，学习它
         listener?.onCommitText(candidate)
         // 残码重匹配：全部消费才进入智能预测态，否则候选栏立即显示残码的新候选
-        if (consumePinyin(candidate)) {
+        val consumedAll = consumePinyin(candidate)
+        // 自造词累积：只有「同一个长拼音串被逐字挑完」才算，判据是提交后是否还有残码
+        noteRunChar(candidate, PinyinEngine.truePinyinOf(candidate).orEmpty(), residual = !consumedAll)
+        if (consumedAll) {
             lastCommittedWord = candidate
             lastPredictions = if (predictionsEnabled()) PinyinEngine.predict(candidate) else emptyList()
         } else {
