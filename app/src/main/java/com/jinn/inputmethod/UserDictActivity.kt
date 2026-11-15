@@ -206,6 +206,9 @@ class UserDictActivity : ComponentActivity() {
         btnImport.text = TEXT_IMPORT
         btnClose.text = TEXT_CLOSE
 
+        // 「一键导出」入口（设置页）：进页面后直接开格式选择，不用再找按钮
+        autoExportPending = intent?.getBooleanExtra(EXTRA_AUTO_EXPORT, false) == true
+
         btnExportYaml.setOnClickListener { startExport(SelectionLedger.ExportFormat.RIME_YAML) }
         btnExportTsv.setOnClickListener { startExport(SelectionLedger.ExportFormat.TSV) }
         btnExportTxt.setOnClickListener { startExport(SelectionLedger.ExportFormat.TXT) }
@@ -420,6 +423,11 @@ class UserDictActivity : ComponentActivity() {
             renderSummary(picks.size, merged.size, kb, degraded, unreadable)
             bindList()
             if (orphaned) toast(TEXT_ORPHANED)
+            // 一键导出：等词表真的读出来再开流程（首帧空表会误报「还没有可导出的词」）
+            if (autoExportPending) {
+                autoExportPending = false
+                if (unreadable) toast(TEXT_LEDGER_UNREADABLE) else startExport(SelectionLedger.ExportFormat.TXT)
+            }
         }
     }
 
@@ -1312,6 +1320,9 @@ class UserDictActivity : ComponentActivity() {
     companion object {
         /** 列表只铺这么多行：全量在导出件里，页面不为几万行付渲染代价 */
         const val MAX_ROWS = 500
+
+        /** 设置页「一键导出词库」带进来的 extra（为 true 时进页面即开导出流程） */
+        const val EXTRA_AUTO_EXPORT = "auto_export"
 
         const val TEXT_TITLE = "用户词库"
         const val TEXT_EXPORT_YAML = "导出 Rime 词库"
