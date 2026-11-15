@@ -5,7 +5,6 @@ import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
 import android.widget.BaseAdapter
-import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.ScrollView
@@ -1080,7 +1079,6 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         // 选中集合按**下标**记：同一段文本可能出现两次（如两行都写「知道了」），
         // 按文本去重会让用户点一处、另一处也跟着亮
         val selected = LinkedHashSet<Int>()
-        val rows = ArrayList<TextView>(segments.size)
         val header = tabButton("", TapSound.G_FUNC) {
             if (selected.isEmpty()) {
                 closeSegments()
@@ -1101,40 +1099,33 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         segmentList.addView(header, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(32),
         ))
-        // 横向排列（2026-11-15 改）：短语行的片段横着铺、可横向滚动，选中仍然是多选。
-        // 竖向列表一屏只放得下七八段，横向一条行能同时看到十几段，挑「哪几块要粘」更省眼。
-        val chipRow = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(dp(2), dp(2), dp(2), dp(2))
+        // 横向排列 + 按键盘宽度自动换行（2026-11-15 改，参照沙鸥拼音的分词面板）：
+        // 短语 chip 横着铺，排满一行就换行，一屏能看到十几段且不用横向拖；选中仍是多选。
+        val chipBox = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
         }
-        val chipScroll = HorizontalScrollView(context).apply {
-            isHorizontalScrollBarEnabled = false
-            overScrollMode = View.OVER_SCROLL_NEVER
-            addView(chipRow, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, dp(36),
-            ))
-        }
-        segmentList.addView(chipScroll, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(40),
+        segmentList.addView(chipBox, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
         ))
+        val chips = ArrayList<TextView>(segments.size)
         for ((index, segment) in segments.withIndex()) {
             val row = tabButton(segment, TapSound.G_TEXT) {
                 if (!selected.add(index)) selected.remove(index)
                 val on = selected.contains(index)
-                rows[index].text = if (on) "✓ $segment" else segment
-                rows[index].setTextColor(
+                chips[index].text = if (on) "✓ $segment" else segment
+                chips[index].setTextColor(
                     if (on) skinColor(context, skin.accent, R.color.accent)
                     else skinColor(context, skin.functionGlyph, R.color.text_primary)
                 )
                 refreshHeader()
+                layoutChips(chipBox, chips)
             }
-            // 横向 chip：宽度随文字，左右各留 6dp 内边距，相邻之间 4dp
+            // chip 宽度随文字（最多吃掉整行），左右各 10dp 留白、相邻 4dp
             row.setPadding(dp(10), 0, dp(10), 0)
-            rows += row
-            chipRow.addView(row, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, dp(32),
-            ).apply { marginEnd = dp(4) })
+            chips += row
         }
+        // 等面板量出宽度再分行：此刻 segmentList.width 还是 0，排出来会全挤在一行
+        segmentList.post { layoutChips(chipBox, chips) }
         segmentGridWasVisible = imageGrid.visibility == View.VISIBLE
         imageGrid.visibility = View.GONE
         listView.visibility = View.GONE
@@ -1143,7 +1134,47 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         Diagnostics.i(TAG, "[$currentTraceId] 分词: id=${item.id} 段数=${segments.size}")
     }
 
-    /** 粘贴（单段时是多选里的那一段）：提交成功后收起面板 */
+    /**
+     * 把分词 chip 按**可用宽度**排成若干行：逐块量自身宽度，排不下的换行。
+     *
+     * 为什么不用横向滚动条：一条长链要横拖才看得全，而分词的使用场景是「一眼扫过、挑几块」，
+     * 换行比横拖直观（沙鸥分词面板也是换行铺）。
+     * 单块过宽（长句）时把 chip 压到整行宽并尾部省略，避免一个 chip 撑到屏幕外。
+     */
+    private fun layoutChips(container: LinearLayout, chips: List<TextView>, attempt: Int = 0) {
+        val avail = segmentList.width
+        if (avail <= dp(60)) {
+            // 还没量到宽度：稍后再排一次，别在这里硬排成一行
+            if (attempt < 8) segmentList.postDelayed({ layoutChips(container, chips, attempt + 1) }, 60)
+            return
+        }
+        container.removeAllViews()
+        var line: LinearLayout? = null
+        var used = 0
+        for (chip in chips) {
+            (chip.parent as? ViewGroup)?.removeView(chip)
+            val spec = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+            chip.measure(spec, View.MeasureSpec.makeMeasureSpec(dp(32), View.MeasureSpec.EXACTLY))
+            val width = (chip.measuredWidth + dp(4)).coerceAtMost(avail)
+            if (line == null || used + width > avail) {
+                line = LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    setPadding(dp(2), dp(1), dp(2), dp(1))
+                }
+                container.addView(line, LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(34),
+                ))
+                used = 0
+            }
+            line!!.addView(chip, LinearLayout.LayoutParams(
+                width - dp(4), dp(32),
+            ).apply { marginEnd = dp(4) })
+            chip.maxWidth = avail - dp(4)
+            chip.ellipsize = android.text.TextUtils.TruncateAt.END
+            used += width
+        }
+    }
+
     private fun pasteSegment(segment: String) {
         if (isPasting) return
         isPasting = true
