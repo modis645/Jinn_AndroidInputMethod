@@ -452,6 +452,37 @@ class UserDictActivity : ComponentActivity() {
         listEntries.adapter = RowAdapter(rows.take(MAX_ROWS))
     }
 
+    /**
+     * 删除一个词的全部记录：先确认（不可恢复），再后台整份重写台账，成功后重新加载列表。
+     */
+    private fun askDeleteWord(row: Row) {
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(TEXT_DELETE_TITLE)
+            .setMessage(String.format(Locale.US, TEXT_DELETE_BODY, row.word, row.count))
+            .setNegativeButton(TEXT_CANCEL, null)
+            .setPositiveButton(TEXT_DELETE_OK) { _, _ -> deleteWord(row.word) }
+            .create()
+        styleDialogButtons(tracked(dialog))
+        dialog.show()
+    }
+
+    private fun deleteWord(word: String) {
+        io.execute {
+            val ok = SelectionLedger.deleteWords(applicationContext, setOf(word))
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                when (ok) {
+                    true -> {
+                        toast(String.format(Locale.US, TEXT_DELETE_OK_TOAST, word))
+                        loadAsync()
+                    }
+                    false -> toast(TEXT_DELETE_FAIL)
+                    null -> toast(TEXT_DELETE_UNREADABLE)
+                }
+            }
+        }
+    }
+
     // ── 导出（加密包 / 明文文件）──────────────────────────────
 
     private fun startExport(format: SelectionLedger.ExportFormat) {
@@ -1149,6 +1180,11 @@ class UserDictActivity : ComponentActivity() {
             (row.findViewWithTag<TextView>(TAG_COL_WORD) ?: error("行视图缺少词列")).text = item.word
             (row.findViewWithTag<TextView>(TAG_COL_PINYIN) ?: error("行视图缺少拼音列")).text =
                 item.pinyin
+            // 长按一行 = 删除这个词的全部记录（用户 2026-11-15：「不能删除指定词」）
+            row.setOnLongClickListener {
+                askDeleteWord(item)
+                true
+            }
             return row
         }
 
@@ -1293,7 +1329,13 @@ class UserDictActivity : ComponentActivity() {
         const val TEXT_IMPORT_NOT_ENABLED = "用户词库未开启，未写入"
         const val TEXT_IMPORT_PENDING = "已排入 %d 条，尚未全部写完，稍后可在列表确认"
 
-        const val TEXT_ENABLE_TITLE = "开启用户词库"
+        const val TEXT_DELETE_TITLE = "删除这个词"
+    const val TEXT_DELETE_BODY = "把「%1$s」的全部 %2$d 次记录从用户词库删掉。\n删除不可恢复，词库之外的数据不受影响。"
+    const val TEXT_DELETE_OK = "删除"
+    const val TEXT_DELETE_OK_TOAST = "已删除「%1$s」"
+    const val TEXT_DELETE_FAIL = "删除失败（文件可能被占用）"
+    const val TEXT_DELETE_UNREADABLE = "台账解不开，暂时不能删除"
+    const val TEXT_ENABLE_TITLE = "开启用户词库"
         const val TEXT_ENABLE_OK = "开启"
         const val TEXT_CANCEL = "取消"
         /** 确认框文字区的最大高度（dp）：超出才滚动，避免长说明把窗口撑满屏 */
