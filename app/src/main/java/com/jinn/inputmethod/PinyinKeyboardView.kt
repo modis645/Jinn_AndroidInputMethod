@@ -835,6 +835,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private val btnSpaceHint: TextView
 
     /**
+     * 空格键正文标签（中文键盘是「空格」两个字；英文键盘把 `key_space` 本身当文本用，
+     * 这时它不存在，所以是可空的）。
+     *
+     * 挂麦克风角标用：语音可用时在「空格」右侧画一个小话筒，提示这里能长按说话
+     * （用户 2026-11-15 提的）。语音不可用时不画 —— 一个按下去毫无反应的图标比没有更糟。
+     */
+    private val btnSpaceLabel: TextView?
+
+    /**
      * 空格长按录音态（2026-11-01）：true = 正在录音且长按手势仍在进行。
      *
      * 只在 [JinnIme.onVoiceHoldStart] 返回 true 后置真；置假的那一处（[endVoiceHold]）
@@ -1263,6 +1272,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
         btnLang = root.findViewById(R.id.key_lang)
         btnSpace = root.findViewById(R.id.key_space)
         btnSpaceHint = root.findViewById(R.id.key_space_hint)
+        btnSpaceLabel = root.findViewById(R.id.key_space_label)
+        // 角标与文字之间留一点空隙（dp 值随屏幕密度走，别写死 px）
+        btnSpaceLabel?.compoundDrawablePadding =
+            (3f * resources.displayMetrics.density).toInt()
         btnBackspace = root.findViewById(R.id.key_backspace)
         btnEnter = root.findViewById(R.id.key_enter)
         btnShift = root.findViewById(R.id.key_shift)
@@ -4837,6 +4850,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
             !voiceHoldActive -> currentInputTypeLabel()
             voiceHoldCancelArmed -> TEXT_VOICE_CANCEL_HINT
             else -> TEXT_VOICE_HOLD_HINT
+        }
+        // 空格键话筒角标：只在语音真的能用时出现。`canVoice()` 已经是长按前的同一道门，
+        // 两处结论必须一致 —— 这里画了图标、长按却被拒，就是在教用户做无效动作。
+        val micRes = if (listener?.canVoice() == true) R.drawable.ic_space_mic else 0
+        btnSpaceLabel?.setCompoundDrawablesWithIntrinsicBounds(0, 0, micRes, 0)
+        // 英文键盘没有子 TextView，`key_space` 自己就是文本：同一枚角标挂它身上
+        (btnSpace as? TextView)?.let {
+            it.compoundDrawablePadding = (3f * resources.displayMetrics.density).toInt()
+            it.setCompoundDrawablesWithIntrinsicBounds(0, 0, micRes, 0)
         }
     }
 
