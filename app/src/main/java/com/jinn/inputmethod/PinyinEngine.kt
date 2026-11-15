@@ -1914,6 +1914,7 @@ object PinyinEngine {
             return
         }
         userWords.clear()
+        synchronized(abbrevCache) { abbrevCache.clear() }
         var n = 0
         for ((word, pinyin) in read.picks) {
             if (addUserWord(word, pinyin)) n++
@@ -1935,6 +1936,8 @@ object PinyinEngine {
         val list = userWords.getOrPut(key) { java.util.Collections.synchronizedList(java.util.ArrayList<UserWord>()) }
         val simplified = toSimplified(word)
         if (list.none { it.word == simplified }) list.add(UserWord(simplified, syllables.size))
+        // 自造词一进来就要能被简拼搜到：缓存按输入串存，不清的话同一个串永远拿旧结果
+        synchronized(abbrevCache) { abbrevCache.clear() }
         return true
     }
 
@@ -2340,6 +2343,17 @@ object PinyinEngine {
      * 字数与段数不等（例如三段输入却命中两字词）直接判不合法 —— 简拼的段就是音节，
      * 音节数必须等于字数。
      */
+    /**
+     * 一整串拼音（`liuzhiwu`）→ 各音节首字母串（`lzw`）。
+     *
+     * 只用于**快筛**：拆不干净（含非法音节）时返回 null，调用方直接跳过。真正的合法性
+     * 仍由 [matchesSegments] 与 [matchesByReading] 判，这里绝不单独决定命中。
+     */
+    private fun initialLettersOf(key: String): String? {
+        val split = splitSyllables(key) ?: return null
+        return buildString(split.size) { for (s in split) append(s[0]) }
+    }
+
     private fun matchesByReading(word: String, segs: List<String>): Boolean {
         if (word.length != segs.size) return false
         for (i in segs.indices) {
@@ -2553,6 +2567,27 @@ object PinyinEngine {
             }
         }
 
+        // 自造词不在内置词库索引里（[initialsIndex] 只覆盖 `pinyin_index.bin`），
+        // 只能单独再走一遍：用户学会的人名/短语若只有全拼打得出来，等于「记了也用不上」
+        // （用户 2026-11-16：自造词的简拼 / 混拼打不出）。表通常只有几十上百条，逐键试切成本可忽略。
+        fun collectUserWords(segs: List<String>) {
+            if (userWords.isEmpty()) return
+            val projectionLetters = buildString(segs.size) { for (s in segs) append(s[0]) }
+            for ((key, list) in userWords) {
+                if (out.size >= ABBREV_MAX_WORDS) return
+                // 快筛：自造词键的首字母串必须对上投影串（与内置词同一判据，先挡掉绝大多数）
+                if (!initialLettersOf(key).let { it == null || !it.startsWith(projectionLetters) }) continue
+                if (!matchesSegments(key, segs)) continue
+                val ranked = UserFrequency.rank(list.map { it.word }) { toSimplified(it) }
+                for (w in displayTake(ranked.asList(), MAX_PHRASES)) {
+                    if (out.size >= ABBREV_MAX_WORDS) return
+                    if (!seen.add(w)) continue
+                    if (!matchesByReading(w, segs)) continue
+                    out.add(w to segs.size)
+                }
+            }
+        }
+
         for (segs in segmentationsOf(typed)) {
             if (out.size >= ABBREV_MAX_WORDS) break
             // 投影串 = 每段的首字母：命中的词，其各音节首字母必然以它开头
@@ -2567,6 +2602,7 @@ object PinyinEngine {
                 if (matchesSegments(key, segs)) collect(key, segs)
                 i++
             }
+            collectUserWords(segs)
         }
 
         val result = if (out.isEmpty()) emptyList() else out.toList()
