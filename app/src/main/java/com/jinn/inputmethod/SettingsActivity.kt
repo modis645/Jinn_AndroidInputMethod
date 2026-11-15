@@ -293,11 +293,8 @@ class SettingsActivity : ComponentActivity() {
             text = TEXT_RARE_ENTRY
             setOnClickListener { startActivity(Intent(this@SettingsActivity, RareCharsActivity::class.java)) }
         }
-        // 敲击音效反馈：独占下一行的单按钮入口 → 独立全屏页（音效六组音色 + 震动四档，改动即落盘）
-        findViewById<Button>(R.id.btn_tap_sound).apply {
-            text = TEXT_TAP_SOUND_ENTRY
-            setOnClickListener { startActivity(Intent(this@SettingsActivity, TapSoundActivity::class.java)) }
-        }
+        // 敲击音效反馈入口已删（用户 2026-11-16「界面和功能删除」）：音效 / 震动仍按 Prefs 里
+        // 既有的取值走（默认关），只是不再提供入口与配置页。
         findViewById<Button>(R.id.btn_clipboard_customize).apply {
             text = TEXT_CLIPBOARD_CUSTOMIZE_ENTRY
             setOnClickListener { startActivity(Intent(this@SettingsActivity, ClipboardCustomizeActivity::class.java)) }
@@ -309,16 +306,8 @@ class SettingsActivity : ComponentActivity() {
                 startActivity(Intent(this@SettingsActivity, GallerySettingsActivity::class.java))
             }
         }
-        // 空格左右按钮：入口按钮（与图库入口同行），点击进入「底栏标点输出」独立页
-        // （逗号 / 句号字符自定义收在那一页里）。
-        // ⚠ 不要再提「空格键左右滑动移动光标开关」：那个开关已于 2026-10-16 随功能整体移除
-        // （`PunctOutputPageTest.空格移光标开关已彻底移除` 反向钉着，标点页里已无 `switch_space_cursor`）。
-        findViewById<Button>(R.id.btn_space_cursor).apply {
-            text = TEXT_SPACE_CURSOR
-            setOnClickListener {
-                startActivity(Intent(this@SettingsActivity, PunctOutputActivity::class.java))
-            }
-        }
+        // 「空格左右按钮」入口已删（用户 2026-11-16「界面和功能删除」）：底栏 `，`/`。`
+        // 仍按 Prefs 里既有取值输出（默认就是「，」「。」），只是不再提供入口与配置页。
         // 存储占用：只读统计页（用户问「存储由什么组成」——大头常是看不见的词库索引缓存）
         findViewById<Button>(R.id.btn_storage_usage).apply {
             text = TEXT_STORAGE_ENTRY
@@ -1702,8 +1691,6 @@ class SettingsActivity : ComponentActivity() {
         // 加更多生僻字：入口文案（页面内的文案在 RareCharsActivity 里下发）
         const val TEXT_RARE_ENTRY = "加更多生僻字"
 
-        // 敲击音效反馈：入口文案（页面内文案在 TapSoundActivity 里下发）
-        const val TEXT_TAP_SOUND_ENTRY = "敲击音效反馈"
         const val TEXT_CLIPBOARD_CUSTOMIZE_ENTRY = "剪贴板自定义"
 
         /** 图库快贴：设置页只留这一个入口，目录绑定 / 自动返回 / 缩略图布局都在子页面里 */
@@ -1712,8 +1699,6 @@ class SettingsActivity : ComponentActivity() {
         /** 键盘外观入口（布局仍引用 `@string/key_appearance_entry`，这里覆盖成新文案） */
         const val TEXT_KEY_APPEARANCE_ENTRY = "键盘外观自选"
 
-        /** 底栏标点输出入口按钮（与「图库快贴功能」同行；页面内文案在 PunctOutputActivity 里下发） */
-        const val TEXT_SPACE_CURSOR = "空格左右按钮"
 
         /** 存储占用：只读统计页（安装包 / 词库包与索引缓存 / 剪贴板 / 日志 各占多少） */
         const val TEXT_STORAGE_ENTRY = "存储占用统计"
