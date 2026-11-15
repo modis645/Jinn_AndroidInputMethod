@@ -3476,7 +3476,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             holdBarHeightOnEmpty -> View.INVISIBLE
             else -> View.GONE
         }
-        viewCandidatePinyin.text = if (empty) "" else withCaret(text)
+        viewCandidatePinyin.text = if (empty) "" else withCaret(text.orEmpty())
         applyPinyinInset()
     }
 
