@@ -18,7 +18,7 @@ package com.jinn.inputmethod
 object CornerLabels {
 
     /** 第 2 排（a..l，9 键）；D 键沿用幻影 26 键的 `$`，其余为中文标点 */
-    private val ROW2 = listOf("，", "。", "$", "？", "！", "：", "；", "“", "”")
+    private val ROW2 = listOf("\\", "/", "$", "？", "！", "：", "；", "“", "”")
 
     /** 第 3 排（z..m，7 键） */
     private val ROW3 = listOf("（", "）", "、", "@", "#", "%", "&")
