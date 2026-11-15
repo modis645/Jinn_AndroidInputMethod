@@ -124,6 +124,56 @@
                     android:text="@string/settings_voice_input_desc" />
             </LinearLayout>
 
+            <LinearLayout
+                style="@style/SettingsCard"
+                android:id="@+id/card_local_asr"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    style="@style/CardHint"
+                    android:id="@+id/text_local_asr_desc"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content" />
+
+                <TextView
+                    style="@style/SettingsLabel"
+                    android:id="@+id/text_local_asr_status"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content" />
+
+                <ProgressBar
+                    android:id="@+id/progress_local_asr"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="6dp"
+                    android:layout_marginTop="6dp"
+                    android:max="100"
+                    android:visibility="gone" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:orientation="horizontal">
+
+                    <Button
+                        style="@style/SettingsButton"
+                        android:id="@+id/btn_local_asr_download"
+                        android:layout_width="0dp"
+                        android:layout_height="44dp"
+                        android:layout_weight="1" />
+
+                    <Button
+                        style="@style/SettingsButton"
+                        android:id="@+id/btn_local_asr_delete"
+                        android:layout_width="0dp"
+                        android:layout_height="44dp"
+                        android:layout_marginStart="8dp"
+                        android:layout_weight="1" />
+                </LinearLayout>
+            </LinearLayout>
+
             <!-- 授权麦克风：状态 + 单个授权按钮（随总开关整体隐藏） -->
             <LinearLayout
                 style="@style/SettingsCard"
@@ -665,55 +715,6 @@
 
             <!-- 本机离线识别（sherpa-onnx + SenseVoice 快速整句）：模型不随包，按需下载。
                  选中「本机离线」时只显示这张卡；文案由 VoiceSettingsActivity 的 TEXT_* 下发。 -->
-            <LinearLayout
-                style="@style/SettingsCard"
-                android:id="@+id/card_local_asr"
-                android:orientation="vertical"
-                android:visibility="gone">
-
-                <TextView
-                    style="@style/CardHint"
-                    android:id="@+id/text_local_asr_desc"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content" />
-
-                <TextView
-                    style="@style/SettingsLabel"
-                    android:id="@+id/text_local_asr_status"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content" />
-
-                <ProgressBar
-                    android:id="@+id/progress_local_asr"
-                    style="?android:attr/progressBarStyleHorizontal"
-                    android:layout_width="match_parent"
-                    android:layout_height="6dp"
-                    android:layout_marginTop="6dp"
-                    android:max="100"
-                    android:visibility="gone" />
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:orientation="horizontal">
-
-                    <Button
-                        style="@style/SettingsButton"
-                        android:id="@+id/btn_local_asr_download"
-                        android:layout_width="0dp"
-                        android:layout_height="44dp"
-                        android:layout_weight="1" />
-
-                    <Button
-                        style="@style/SettingsButton"
-                        android:id="@+id/btn_local_asr_delete"
-                        android:layout_width="0dp"
-                        android:layout_height="44dp"
-                        android:layout_marginStart="8dp"
-                        android:layout_weight="1" />
-                </LinearLayout>
-            </LinearLayout>
 
             <!-- 语音测试：一次自包含的 3 秒识别，**不依赖 IME 是否正在输入**（自己新建客户端与采集器）。
                  识别正文直接落进 edit_voice_test，结论落 text_voice_test_result —— 用户能在同一个位置
