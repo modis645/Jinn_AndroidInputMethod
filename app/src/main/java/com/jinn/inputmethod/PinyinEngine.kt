@@ -2410,8 +2410,14 @@ object PinyinEngine {
             }
         }
         // 2a. 简拼 / 混拼：精确词之后、单字之前（简拼不补这一层，纯简拼就一条候选都出不来）
+        //
+        // 「输入本该有几个音节」要跟着简拼一起上调：`wokk` 的自动切分只切出一个音节（wo），
+        // 若仍按 1 分组，单字「我」会被归到「与输入音节数相同」的第一组、压住「我看看」——
+        // 这正是用户报的「混拼输入会把全拼的汉字直接上屏」（用户 2026-11-15）。
+        var targetSyllables = syllables.size
         for ((word, sylCount) in abbreviationCandidates(typed)) {
             if (words.add(word)) syllableCounts[word] = sylCount
+            if (sylCount > targetSyllables) targetSyllables = sylCount
         }
         val chars = LinkedHashSet<String>(cap)
         for (syl in syllables) {
@@ -2598,7 +2604,7 @@ object PinyinEngine {
         // 返回的仍是候选本身。恒走 keyOf 重载：关繁体时 toSimplified 是恒等映射
         // （`tradSimp ?: return word`），不按开关选重载 —— 那种分支正是「改一处忘另一处」的温床。
         val ordered = keepCompletionHead(
-            rankWithinSyllableGroups(result, syllableCounts, syllables.size),
+            rankWithinSyllableGroups(result, syllableCounts, targetSyllables),
             completionWords,
         )
         return Result(ordered, syllables, partial)
