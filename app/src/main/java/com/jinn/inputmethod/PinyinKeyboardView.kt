@@ -2108,19 +2108,26 @@ class PinyinKeyboardView @JvmOverloads constructor(
         lastCommittedPinyin = pinyin
         // 选择台账：只追加「词 + 读音」，一行一次（与词频表分开，互不覆盖）。
         // 词按**简体**归一键（与 UserFrequency.rememberChoice 同口径）：繁体模式下同一词不会繁简两份计数
-        recordLedgerIfNew(word, pinyin)
+        // 先记词频再判门槛：收录次数要把**本次**这次选择算进去
         PinyinEngine.rememberChoice(word)
+        recordLedgerIfNew(word, pinyin)
     }
 
     /**
-     * 选择台账只收「字典里没有的词」。
+     * 选择台账只收「字典里没有的词」，而且**不是点一次就收**。
      *
+     * 两条门槛并列（主流输入法口径，用户 2026-11-16 指定，见 [PinyinEngine.shouldAdmitUserWord]）：
+     * 同一串拼音连续 3 次选中同一个词，或同一个词累计被选中 6 次。
      * 常见词（「我」「你好」这类）从词库能直接查出来，再记一遍只是把台账塞满常用词，
      * 用户想找的「自己造的词」反而被淹掉；判定见 [PinyinEngine.isKnownWord]。
      */
     private fun recordLedgerIfNew(word: String, pinyin: String) {
         if (word.isEmpty()) return
         if (PinyinEngine.isKnownWord(word)) return
+        val typedKey = composing.toString().replace(PinyinEngine.SEPARATOR_CHAR.toString(), "")
+        val hits = PinyinEngine.pickCountOf(word)
+        // 不够门槛：这次只进词频表（下次再选同词会自动累加，够数自然收）
+        if (!PinyinEngine.shouldAdmitUserWord(word, typedKey, hits)) return
         SelectionLedger.record(PinyinEngine.toSimplified(word), pinyin)
         // 立刻进候选池（不必等下次启动）：自造词当场就能用，否则用户「造了词还是打不出来」
         PinyinEngine.noteUserWord(word, pinyin)
