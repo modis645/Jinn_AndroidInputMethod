@@ -1868,6 +1868,27 @@ object PinyinEngine {
         return null
     }
 
+    /**
+     * 内置词库里是否**已经有**这个词（含单字表）。
+     *
+     * 用途只有一个：[SelectionLedger] 收词时先问一句：字典里本来就有的词不该再抄一份
+     * 进口述台账 —— 用户点「我」「你好」这种现成词，词库会很快被常见词塞满，
+     * 反而看不到自己真正造出来的词（用户 2026-11-15：「已经存在的词，点选不应该进用户词库」）。
+     */
+    fun isKnownWord(word: String): Boolean {
+        if (word.isEmpty()) return false
+        val simplified = toSimplified(word)
+        if (wordToPinyin[simplified] != null) return true
+        if (candidatePinyin.containsKey(simplified)) return true
+        if (candidateTruePinyin.containsKey(simplified)) return true
+        if (word.length == 1) {
+            for ((_, chars) in charsBySyllable) {
+                if (word in chars) return true
+            }
+        }
+        return false
+    }
+
     /** 把拼接键切成音节、用空格连接；切不开时原样返回 */
     fun spacedSyllables(key: String): String {
         val syllables = segment(key.lowercase(Locale.ROOT)).first
