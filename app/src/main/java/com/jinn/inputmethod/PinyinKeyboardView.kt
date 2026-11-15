@@ -203,6 +203,14 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 逐键展开的结果（与 [composing] 不是一一对应），按显示位置定位会错位。
      */
     private var pinyinCaret = -1
+    /**
+     * 退格把拼音删空时先抱着栏高不放（拼音条转 INVISIBLE 而不是 GONE）。
+     *
+     * 键盘高度由「拼音条 ± 候选区」决定：退格删到空的那一下如果直接 GONE，
+     * 输入法窗口高度瞬间变矮 → 宿主跟着 resize 一次，连续退格就是连着闪屏。
+     * 抱着高度直到下一次真的输入/收起，高度就只变一次（用户反馈「按退格键，屏幕闪烁」）。
+     */
+    private var holdBarHeightOnEmpty = false
 
     /** 拼音条上一次点按的时间与落点（双击 = 插音节分隔符，见 [bindPinyinCaret]） */
     private var pinyinLastTapMs = 0L
@@ -3306,6 +3314,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
             val at = insertionPoint()
             if (at > 0) composing.deleteCharAt(at - 1)
             if (pinyinCaret >= 0) pinyinCaret = (at - 1).coerceAtLeast(0)
+            // 删到空也别立刻收栏：高度抖动 = 屏幕闪（见 holdBarHeightOnEmpty）
+            if (composing.isEmpty()) holdBarHeightOnEmpty = true
             refreshCandidateBar()
             if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "退格删拼音: ${composing}")
         } else if (lastPredictions.isNotEmpty() && predictionsEnabled()) {
@@ -3458,8 +3468,15 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 预测态没有拼音串但仍有可清空的内容，走 [showPinyinBarOnly]。
      */
     private fun showPinyin(text: String?) {
-        pinyinBar.visibility = if (text.isNullOrEmpty()) View.GONE else View.VISIBLE
-        viewCandidatePinyin.text = if (text.isNullOrEmpty()) "" else withCaret(text)
+        val empty = text.isNullOrEmpty()
+        if (!empty) holdBarHeightOnEmpty = false
+        pinyinBar.visibility = when {
+            !empty -> View.VISIBLE
+            // 退格删空：抱着高度，别让输入法窗口变矮（见 holdBarHeightOnEmpty）
+            holdBarHeightOnEmpty -> View.INVISIBLE
+            else -> View.GONE
+        }
+        viewCandidatePinyin.text = if (empty) "" else withCaret(text)
         applyPinyinInset()
     }
 
@@ -4416,6 +4433,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         if (consumption.quanpinChars >= fullInput.length) {
             composing.clear()
             pinyinCaret = -1
+        holdBarHeightOnEmpty = false
             return true
         }
         if (shuangpinMode) {
