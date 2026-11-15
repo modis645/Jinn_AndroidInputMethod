@@ -1993,8 +1993,20 @@ class PinyinKeyboardView @JvmOverloads constructor(
         lastCommittedPinyin = pinyin
         // 选择台账：只追加「词 + 读音」，一行一次（与词频表分开，互不覆盖）。
         // 词按**简体**归一键（与 UserFrequency.rememberChoice 同口径）：繁体模式下同一词不会繁简两份计数
-        SelectionLedger.record(PinyinEngine.toSimplified(word), pinyin)
+        recordLedgerIfNew(word, pinyin)
         PinyinEngine.rememberChoice(word)
+    }
+
+    /**
+     * 选择台账只收「字典里没有的词」。
+     *
+     * 常见词（「我」「你好」这类）从词库能直接查出来，再记一遍只是把台账塞满常用词，
+     * 用户想找的「自己造的词」反而被淹掉；判定见 [PinyinEngine.isKnownWord]。
+     */
+    private fun recordLedgerIfNew(word: String, pinyin: String) {
+        if (word.isEmpty()) return
+        if (PinyinEngine.isKnownWord(word)) return
+        SelectionLedger.record(PinyinEngine.toSimplified(word), pinyin)
     }
 
     /** 设置输入方案（全拼 / 八种双拼）与初始中英文状态 */
@@ -4518,10 +4530,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
         if (!suppressLearning) {
             // 选择台账记两行：被点的那一节（四海）+ 合并后的整词（五湖四海）。
             // 词频表仍只学整词（排序语义不变），台账是词库原料，两者分开。
-            SelectionLedger.record(PinyinEngine.toSimplified(pred), predPinyin)
+            recordLedgerIfNew(pred, predPinyin)
             // 合并词与 pred 相同（没有前一个词）时不再记第二行，否则同一「词+读音」频次翻倍
             if (fullWord.isNotEmpty() && fullWord != pred) {
-                SelectionLedger.record(PinyinEngine.toSimplified(fullWord), fullPinyin)
+                recordLedgerIfNew(fullWord, fullPinyin)
             }
             PinyinEngine.rememberChoice(fullWord.ifEmpty { pred })
         }
