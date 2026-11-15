@@ -449,6 +449,11 @@ class VoiceSettingsActivity : ComponentActivity() {
         // 于是「打开页面自动下载」形同不存在（用户 2026-11-15 第 2 次反馈）。
         autoDownloadLocalAsrOnce()
 
+        // 清掉上次被强杀 / 崩溃留下的下载临时件（归档 + 解包目录，163 MB 级）。
+        // 只碰 cacheDir 里的过程文件，**不动** filesDir/local-asr 里已下好的模型。
+        Thread { LocalAsrDownloader.sweepCache(applicationContext) }
+            .apply { name = "local-asr-sweep"; isDaemon = true }.start()
+
         // 凭据输入框的标签用 hint 下发（values/strings.xml 默认禁改）
         textXfDesc.text = if (prefs.hasUnreadableXfCredential) {
             // 磁盘上明明有密文、本机却解不开（软件密钥丢失 / 密文损坏）：不说清的话
@@ -809,7 +814,9 @@ class VoiceSettingsActivity : ComponentActivity() {
 
             ready -> {
                 val vad = if (LocalAsrModel.hasVad(this)) "分句模型已就绪" else "分句模型缺失（长句整段识别，不影响使用）"
-                textLocalAsrStatus.text = "模型已就绪（占用 ${used / (1024 * 1024)} MB）\n$vad"
+                textLocalAsrStatus.text =
+                    "模型已就绪（占用 ${used / (1024 * 1024)} MB）\n$vad\n" +
+                        "存放在应用数据目录，清理缓存不会删；只有卸载或点「删除模型」才会消失"
                 progressLocalAsr.visibility = View.GONE
                 btnLocalAsrDownload.text = TEXT_LOCAL_ASR_DOWNLOAD
                 btnLocalAsrDelete.visibility = View.VISIBLE
@@ -844,7 +851,7 @@ class VoiceSettingsActivity : ComponentActivity() {
         if (LocalAsrDownloader.isRunning()) {
             LocalAsrDownloader.log(this, "用户点了取消")
             LocalAsrDownloader.cancel()
-            refreshLocalAsrStatus(0)
+        refreshLocalAsrStatus(0)
             return
         }
         // 先在本帧把「已开始」写到界面上：网络请求是异步的，之前要等后台线程回调，
