@@ -123,21 +123,13 @@
             android:exported="false"
             android:label="@string/key_appearance_entry" />
 
-        <!-- 底栏标点输出页：从设置页「空格左右按钮」按钮进入（逗号/句号字符，中文态与英文态分开，各限一个） -->
-        <activity
-            android:name=".PunctOutputActivity"
-            android:exported="false" />
-
         <!-- 剪贴板自定义页：从设置页「敲击音效反馈」同行右侧进入（数量/体积/收藏/单条/分页/搜索上限） -->
         <activity
             android:name=".ClipboardCustomizeActivity"
             android:exported="false" />
 
-        <!-- 敲击音效反馈页：从设置页「敲击音效反馈」进入（六组音色分配 + 震动四档，改动即落盘） -->
-        <activity
-            android:name=".TapSoundActivity"
-            android:exported="false" />
-
+        <!-- PunctOutputActivity / TapSoundActivity：入口已于 2026-11-16 删除，两个页面不再注册
+             （类还在，死代码留到最终定版统一清理）。 -->
         <!-- 翻译设置页：Provider / 凭据 / 目标语言，从设置页「翻译设置」进入（改动即落盘） -->
         <activity
             android:name=".TranslationSettingsActivity"
