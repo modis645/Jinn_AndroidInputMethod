@@ -2280,6 +2280,10 @@ class JinnIme : InputMethodService() {
         // ⚠ 这一行必须留在函数**末尾**（守卫「平台反馈策略要绑在视图创建上」钉着这个位置）：
         // 整棵树建完之后才装，运行期新建的键由 KeyFeedback 的树回调覆盖
         applyFeedbackSuppression()
+        // 连续录音的键面（「结束」两字 + 电平条）只是视图字段：换肤 / 换输入框 / 重新弹键盘
+        // 会建一棵新树，不按 IME 的权威 mode 补一次，录音中就又写成「长语音」，用户会以为录完了
+        // （2026-11-17 复核）。startRecording / stopRecording 仍是唯一的状态源，这里只对齐键面。
+        if (mode == Mode.TOGGLE) pinyinKeyboard?.setVoiceToggleState(true)
         return container
     }
 
