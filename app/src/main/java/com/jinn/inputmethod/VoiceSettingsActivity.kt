@@ -78,6 +78,7 @@ class VoiceSettingsActivity : ComponentActivity() {
     private lateinit var btnLocalAsrDownload: android.widget.Button
     private lateinit var btnLocalAsrDelete: android.widget.Button
     private lateinit var btnLocalAsrImport: android.widget.Button
+    private lateinit var btnLocalAsrLog: android.widget.Button
     private lateinit var spinnerVoiceBackend: UserAwareSpinner
     private lateinit var editXfAppId: EditText
     private lateinit var editXfApiKey: EditText
@@ -316,6 +317,7 @@ class VoiceSettingsActivity : ComponentActivity() {
         btnLocalAsrDownload = findViewById(R.id.btn_local_asr_download)
         btnLocalAsrDelete = findViewById(R.id.btn_local_asr_delete)
         btnLocalAsrImport = findViewById(R.id.btn_local_asr_import)
+        btnLocalAsrLog = findViewById(R.id.btn_local_asr_log)
         btnLocalAsrImport.text = TEXT_LOCAL_ASR_IMPORT
         spinnerVoiceBackend = UserAwareSpinner(this)   // 布局里已删除（在线语音下线，2026-11-15）：留给保存/回填逻辑一个空壳，界面上不可见
         editXfAppId = EditText(this)   // 布局里已删除（在线语音下线，2026-11-15）：留给保存/回填逻辑一个空壳，界面上不可见
@@ -431,7 +433,6 @@ class VoiceSettingsActivity : ComponentActivity() {
                 parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long,
             ) {
                 applyBackendVisibility()
-        autoDownloadLocalAsrOnce()
                 refreshDirty()
                 scheduleAutosave()
             }
@@ -443,7 +444,12 @@ class VoiceSettingsActivity : ComponentActivity() {
         btnLocalAsrDownload.setOnClickListener { onLocalAsrDownloadClicked() }
         btnLocalAsrDelete.setOnClickListener { onLocalAsrDeleteClicked() }
         btnLocalAsrImport.setOnClickListener { importLauncher.launch(arrayOf("*/*")) }
+        btnLocalAsrLog.setOnClickListener { copyLocalAsrLog() }
         refreshLocalAsrStatus()
+        // 进页面就自动开始下载（沙鸥一直是这个行为：打开语音页立刻在后台拉模型）。
+        // 之前这一行被误放在隐藏 spinner 的 onItemSelected 里 —— 那个选中事件不一定会来，
+        // 于是「打开页面自动下载」形同不存在（用户 2026-11-15 第 2 次反馈）。
+        autoDownloadLocalAsrOnce()
 
         // 凭据输入框的标签用 hint 下发（values/strings.xml 默认禁改）
         textXfDesc.text = if (prefs.hasUnreadableXfCredential) {
@@ -814,22 +820,56 @@ class VoiceSettingsActivity : ComponentActivity() {
             }
 
             else -> {
-                textLocalAsrStatus.text = "模型未下载（当前占用 ${used / (1024 * 1024)} MB）"
+                val fail = LocalAsrDownloader.lastFailure
+                textLocalAsrStatus.text =
+                    if (fail.isNullOrBlank()) {
+                        "模型未下载（当前占用 ${used / (1024 * 1024)} MB）"
+                    } else {
+                        "模型未下载（当前占用 ${used / (1024 * 1024)} MB）\n上次失败：$fail"
+                    }
                 progressLocalAsr.visibility = View.GONE
                 btnLocalAsrDownload.text = TEXT_LOCAL_ASR_DOWNLOAD
                 btnLocalAsrDelete.visibility = View.GONE
             }
         }
+        // 有日志才露出「复制下载日志」：正常路径不看它，出问题时它是唯一能拿到的现场
+        btnLocalAsrLog.visibility =
+            if (!running && LocalAsrDownloader.logText(this).let { it.isNotBlank() && it != "（暂无日志）" }) {
+                View.VISIBLE
+            } else {
+                View.GONE
+            }
     }
 
     /** 下载按钮：未就绪 = 开下；下载中 = 取消 */
     private fun onLocalAsrDownloadClicked() {
         if (LocalAsrDownloader.isRunning()) {
+            LocalAsrDownloader.log(this, "用户点了取消")
             LocalAsrDownloader.cancel()
             refreshLocalAsrStatus(0)
             return
         }
+        // 先在本帧把「已开始」写到界面上：网络请求是异步的，之前要等后台线程回调，
+        // 弱网/首次 DNS 解析的几百毫秒里按钮和文字都不动，观感就是「点了没反应」。
+        LocalAsrDownloader.log(this, "用户点了下载")
+        textLocalAsrStatus.text = "已开始下载，正在准备连接…"
+        progressLocalAsr.visibility = View.VISIBLE
+        progressLocalAsr.progress = 0
+        btnLocalAsrDownload.text = TEXT_LOCAL_ASR_CANCEL
         startLocalAsrDownload()
+    }
+
+    /**
+     * 把下载日志复制到剪贴板（一键取证）。
+     *
+     * 为什么要这一条：模型下载失败的原因（DNS、403、代理回网页、校验不符）只发生在手机上，
+     * 用户描述「没反应」时无从判断是哪一步；日志复制出来贴给我就能一次定位。
+     */
+    private fun copyLocalAsrLog() {
+        val text = LocalAsrDownloader.logText(this)
+        val cm = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("幻影拼音下载日志", text))
+        android.widget.Toast.makeText(this, "下载日志已复制到剪贴板", android.widget.Toast.LENGTH_SHORT).show()
     }
 
     /**
