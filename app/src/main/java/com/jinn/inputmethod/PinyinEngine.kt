@@ -1925,6 +1925,45 @@ object PinyinEngine {
     /** 记一条自造词（台账写入后立即生效，不必等下次启动） */
     fun noteUserWord(word: String, pinyin: String): Boolean = addUserWord(word, pinyin)
 
+    /** 该词累计被选中多少次（含本次；来自 [UserFrequency]，带长期不用衰减） */
+    fun pickCountOf(word: String): Int = UserFrequency.weightOf(toSimplified(word)).toInt()
+
+    /** 某一串输入（含简拼 / 混拼）最近连续命中的是哪个词、连了几次 */
+    private class PickStreak(var word: String = "", var count: Int = 0)
+
+    /** 输入串（去分隔符）→ 连击状态。用户可能同时用全拼与简拼，所以按串分开计 */
+    private val pickStreaks = java.util.concurrent.ConcurrentHashMap<String, PickStreak>()
+
+    /**
+     * 是否够格把 [word] 收进用户词库（主流输入法的两条并列门槛，用户 2026-11-16 指定）。
+     *
+     * 1. **连续 3 次**：同一串拼音（全拼 / 简拼 / 混拼都算同一串）连着选中同一个词。
+     *    换一个词就是断连 —— 手抖点错一次不会把词收进去。
+     * 2. **累计 6 次**：同一个词被选中过 6 次（不看输入串，也不要求连续）。
+     *    兜住「每次都用不同拼法（`lzw` / `liuzhiwu`）打同一个词」这种正常用法。
+     *
+     * @param typedKey 本次实际的输入串（已去分隔符）；空串（残码结算等时机）时只看累计次数
+     * @param cumulative 该词累计被选中次数（含本次）
+     */
+    fun shouldAdmitUserWord(word: String, typedKey: String, cumulative: Int): Boolean {
+        if (word.isEmpty()) return false
+        if (cumulative >= ADMIT_TOTAL_PICKS) return true
+        if (typedKey.isEmpty()) return false
+        val streak = pickStreaks.getOrPut(typedKey) { PickStreak() }
+        synchronized(streak) {
+            if (streak.word == word) streak.count++ else { streak.word = word; streak.count = 1 }
+            return streak.count >= ADMIT_STREAK_PICKS
+        }
+    }
+
+    private companion object {
+        /** 同一串拼音连续选中同一词多少次才收录（主流输入法口径） */
+        const val ADMIT_STREAK_PICKS = 3
+
+        /** 同一个词累计被选中多少次才收录（不看是否连续、不看用哪种拼法） */
+        const val ADMIT_TOTAL_PICKS = 6
+    }
+
     private fun addUserWord(word: String, pinyin: String): Boolean {
         if (word.isEmpty() || pinyin.isEmpty()) return false
         val syllables = pinyin.split(' ').filter { it.isNotBlank() }
