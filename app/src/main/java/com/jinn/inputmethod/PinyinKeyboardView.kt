@@ -31,6 +31,15 @@ import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.roundToInt
 
+/** 分词键的两套键面文案（中文态 / 英文态）。
+ *
+ * 必须是**文件级**常量：类体内 `val` 按声明顺序初始化，而这个类在构造函数里就会刷新键面，
+ * 声明写在后半段时构造函数读到的是 null —— 2026-11-15 真机崩溃栈正是
+ * `Paint.measureText: text cannot be null`（buildTextIcon 收到 null 标签）。
+ */
+private const val TEXT_SHIFT_SPLIT = "分词"
+private const val TEXT_SHIFT_UPPER = "大写"
+
 /**
  * 拼音键盘视图：候选栏 + 26 键 + 底部功能行。
  *
@@ -2453,11 +2462,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 也不会因为字形与字号跟键盘其它功能键不一致而显得突兀。字形画成**纯白**，
      * 交给既有 `imageTintList` 着色（与「符号 / 删除」等键同一条着色路径）。
      */
-    /** 分词键的两套键面文案（中文态 / 英文态） */
-    private val TEXT_SHIFT_SPLIT = "分词"
-    private val TEXT_SHIFT_UPPER = "大写"
-
-    private fun buildTextIcon(text: String, sp: Float = 13f): Drawable {
+    private fun buildTextIcon(text: String?, sp: Float = 13f): Drawable {
+        if (text.isNullOrEmpty()) return android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
         val px = (sp * resources.displayMetrics.scaledDensity).coerceAtLeast(1f)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             textSize = px
