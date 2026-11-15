@@ -144,7 +144,8 @@ internal object StorageUsage {
         item(
             "离线语音模型",
             "本机识别模型（在「离线语音」页可下载 / 删除；清手机缓存不会删，卸载才释放）",
-            scan(File(files, LocalAsrModel.DIR_NAME), claimed),
+            // 模型目录可能已迁到外部专属目录（见 LocalAsrModel.dir）：直接问它，别写死 filesDir
+            scan(LocalAsrModel.dir(context), claimed),
         )
         item("用户词频", "随打字自动累积，用于把常用词排在前面", scan(File(files, UserFrequency.FILE_NAME), claimed))
         // 台账是应用里唯一无上限增长的文件：不认领就会落进「其他」，用户在这里看不到它
