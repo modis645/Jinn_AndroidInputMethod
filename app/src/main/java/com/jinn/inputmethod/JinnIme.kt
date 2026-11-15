@@ -2003,6 +2003,62 @@ class JinnIme : InputMethodService() {
                     }
                     return true
                 }
+                /**
+                 * 单击语音键 = 连续录音开关（点一下开录、再点一下结束）。
+                 *
+                 * 与长按共用**同一批准入闸**（开关 / 密码框 / 权限 / 翻译在途 / 已有录音），
+                 * 区别只在收尾方式：TOGGLE 靠再点一次或到点自动收尾，HOLD 靠松手。
+                 */
+                override fun onVoiceToggle(): Boolean {
+                    if (mode == Mode.TOGGLE) {
+                        Diagnostics.i(TAG, "onVoiceToggle: 再点一下 → 结束连续录音")
+                        stopRecording(commit = true)
+                        return false
+                    }
+                    if (mode == Mode.HOLD) {
+                        Diagnostics.w(TAG, "onVoiceToggle: 正在长按录音，本次点击忽略")
+                        toast(TEXT_VOICE_START_FAILED)
+                        return false
+                    }
+                    if (!prefs.voiceInputEnabled) {
+                        Diagnostics.i(TAG, "onVoiceToggle: 语音输入未开启，转到语音设置页")
+                        toast("语音输入未开启，正在打开语音设置…")
+                        openVoiceSettings()
+                        return false
+                    }
+                    val field = currentInputEditorInfo
+                    if (InputFieldPrivacy.blocksTranslation(field?.inputType, field?.imeOptions ?: 0)) {
+                        Diagnostics.w(TAG, "onVoiceToggle: 输入框被拒绝，不录音")
+                        toast(TEXT_VOICE_PRIVATE_FIELD)
+                        return false
+                    }
+                    if (!hasMicPermission()) {
+                        Diagnostics.w(TAG, "onVoiceToggle: 缺少 RECORD_AUDIO 权限，退回语音页面授权")
+                        toast(TEXT_VOICE_NEED_PERMISSION)
+                        switchToVoiceKeyboard()
+                        return false
+                    }
+                    if (translateInFlight) {
+                        Diagnostics.w(TAG, "onVoiceToggle: 翻译在途，不进入连续录音")
+                        toast(TEXT_TRANSLATING_PLEASE_WAIT)
+                        return false
+                    }
+                    if (asr?.state != LinkState.ONLINE) {
+                        Diagnostics.i(TAG, "onVoiceToggle: 语音服务未就绪(state=${asr?.state})，先建连")
+                        runCatching { asr?.connect() }.onFailure {
+                            Diagnostics.e(TAG, "onVoiceToggle: 建连失败 ${it.javaClass.simpleName} ${it.message}", it)
+                        }
+                        toast(TEXT_VOICE_CONNECTING)
+                        return false
+                    }
+                    startRecording(Mode.TOGGLE)
+                    if (mode != Mode.TOGGLE) {
+                        Diagnostics.w(TAG, "onVoiceToggle: startRecording 未进入 TOGGLE，本次点击作废")
+                        toast(TEXT_VOICE_START_FAILED)
+                        return false
+                    }
+                    return true
+                }
                 override fun onVoiceHoldUpdate(cancelArmed: Boolean) = setCancelArmed(cancelArmed)
                 override fun onVoiceHoldEnd(cancelled: Boolean) {
                     // stopRecording 自己会把 mode 归 NONE 并按 commit 决定「送收尾包等结果」还是「丢弃」
@@ -4483,6 +4539,8 @@ class JinnIme : InputMethodService() {
         if (prefs.useComposing) currentInputConnection?.finishComposingText()
 
         mode = target
+        // 连续录音的键面由 IME 通报（视图不自己猜）：重建后也能补上「结束 m:ss」这一态
+        if (target == Mode.TOGGLE) pinyinKeyboard?.setVoiceToggleState(true)
         micButton?.recording = true
         Diagnostics.i(TAG, "startRecording: 开始录音 target=$target")
         setHint(
@@ -4503,6 +4561,7 @@ class JinnIme : InputMethodService() {
         // 换输入框 / 键盘收起），那几条路径都不经过空格的手势回调，视图侧的长按态会一直挂着，
         // 小字停在「松手转文字」。幂等：手势自己收尾时这里已经是复位后的状态。
         pinyinKeyboard?.cancelVoiceHold()
+        pinyinKeyboard?.cancelVoiceToggle()
         if (mode == Mode.NONE) return
         mode = Mode.NONE
         ui.removeCallbacks(autoStopRunnable)
