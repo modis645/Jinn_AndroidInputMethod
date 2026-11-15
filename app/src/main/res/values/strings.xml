@@ -47,6 +47,7 @@
     <string name="hint_done">完成</string>
     <string name="hint_empty">没听到内容</string>
     <string name="hint_silence">没听到声音</string>
+    <string name="hint_silence_still_recording">安静下来了 · 仍在录音，点「结束」上屏</string>
     <!-- 服务未连接 / 未授权 -->
     <string name="hint_not_connected">服务端未连接，点上方状态栏检查设置</string>
     <string name="hint_grant_permission">点上方状态栏去授权麦克风</string>
