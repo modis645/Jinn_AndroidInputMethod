@@ -78,7 +78,6 @@ class VoiceSettingsActivity : ComponentActivity() {
     private lateinit var btnLocalAsrDownload: android.widget.Button
     private lateinit var btnLocalAsrDelete: android.widget.Button
     private lateinit var btnLocalAsrImport: android.widget.Button
-    private lateinit var btnLocalAsrLog: android.widget.Button
     private lateinit var textLocalAsrLog: android.widget.TextView
     private lateinit var spinnerVoiceBackend: UserAwareSpinner
     private lateinit var editXfAppId: EditText
@@ -317,8 +316,9 @@ class VoiceSettingsActivity : ComponentActivity() {
         progressLocalAsr = findViewById(R.id.progress_local_asr)
         btnLocalAsrDownload = findViewById(R.id.btn_local_asr_download)
         btnLocalAsrDelete = findViewById(R.id.btn_local_asr_delete)
+        btnLocalAsrDelete.text = "删除模型"
         btnLocalAsrImport = findViewById(R.id.btn_local_asr_import)
-        btnLocalAsrLog = findViewById(R.id.btn_local_asr_log)
+        btnLocalAsrImport.text = "从本机导入模型文件"
         textLocalAsrLog = findViewById(R.id.text_local_asr_log)
         btnLocalAsrImport.text = TEXT_LOCAL_ASR_IMPORT
         spinnerVoiceBackend = UserAwareSpinner(this)   // 布局里已删除（在线语音下线，2026-11-15）：留给保存/回填逻辑一个空壳，界面上不可见
@@ -446,7 +446,6 @@ class VoiceSettingsActivity : ComponentActivity() {
         btnLocalAsrDownload.setOnClickListener { onLocalAsrDownloadClicked() }
         btnLocalAsrDelete.setOnClickListener { onLocalAsrDeleteClicked() }
         btnLocalAsrImport.setOnClickListener { importLauncher.launch(arrayOf("*/*")) }
-        btnLocalAsrLog.setOnClickListener { copyLocalAsrLog() }
         refreshLocalAsrStatus()
         // 进页面就自动开始下载（沙鸥一直是这个行为：打开语音页立刻在后台拉模型）。
         // 之前这一行被误放在隐藏 spinner 的 onItemSelected 里 —— 那个选中事件不一定会来，
@@ -836,20 +835,13 @@ class VoiceSettingsActivity : ComponentActivity() {
         }
         // 日志尾部直接摆在卡片里：用户「没反应」时截一张图，就能看出卡在哪个源、
         // 是 DNS、403、还是校验不过（比让他复制粘贴可靠）
-        val tail = LocalAsrDownloader.logTail(this)
+        val tail = if (ready) "" else LocalAsrDownloader.logTail(this)
         if (tail.isEmpty()) {
             textLocalAsrLog.visibility = View.GONE
         } else {
             textLocalAsrLog.visibility = View.VISIBLE
             textLocalAsrLog.text = tail
         }
-        // 有日志才露出「复制下载日志」：正常路径不看它，出问题时它是唯一能拿到的现场
-        btnLocalAsrLog.visibility =
-            if (!running && LocalAsrDownloader.logText(this).let { it.isNotBlank() && it != "（暂无日志）" }) {
-                View.VISIBLE
-            } else {
-                View.GONE
-            }
     }
 
     /** 下载按钮：未就绪 = 开下；下载中 = 取消 */
@@ -870,19 +862,7 @@ class VoiceSettingsActivity : ComponentActivity() {
         startLocalAsrDownload()
     }
 
-    /**
-     * 把下载日志复制到剪贴板（一键取证）。
-     *
-     * 为什么要这一条：模型下载失败的原因（DNS、403、代理回网页、校验不符）只发生在手机上，
-     * 用户描述「没反应」时无从判断是哪一步；日志复制出来贴给我就能一次定位。
-     */
-    private fun copyLocalAsrLog() {
-        val text = LocalAsrDownloader.logText(this)
-        val cm = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-        cm.setPrimaryClip(android.content.ClipData.newPlainText("幻影拼音下载日志", text))
-        android.widget.Toast.makeText(this, "下载日志已复制到剪贴板", android.widget.Toast.LENGTH_SHORT).show()
-    }
-
+    
     /**
      * 真正发起一次下载（按钮与「打开本页自动下载」共用这一段）。
      *
