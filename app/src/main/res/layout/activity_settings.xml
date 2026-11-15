@@ -444,35 +444,8 @@
              VoiceSettingsActivity（布局 activity_voice_settings.xml），本页不再保留任何语音控件 ——
              别再照旧版清单把它们补回来。 -->
 
-        <!-- 在线翻译（BYOK）：总开关 + 配置入口。开关决定键盘功能面板是否显示「翻译」键；
-             文案全部代码下发（strings.xml 默认不改动），布局里不写 android:text -->
-        <LinearLayout
-            style="@style/SettingsCard">
-
-            <Switch
-                android:id="@+id/switch_translate"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:ellipsize="end"
-                android:maxLines="2"
-                android:minHeight="40dp"
-                android:textColor="@color/text_primary"
-                android:textSize="13sp" />
-
-            <TextView
-                style="@style/CardHint"
-                android:id="@+id/text_translate_state"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
-                />
-
-            <Button
-                style="@style/SettingsButton"
-                android:id="@+id/btn_translate_settings"
-                android:layout_width="match_parent"
-                android:layout_marginTop="4dp" />
-        </LinearLayout>
+        <!-- 在线翻译（BYOK）卡片已整体下线：幻影版不做联网翻译，开关与入口一起删除。
+             键盘功能面板里的「翻译」键也不再出现（见功能面板的键集合）。 -->
 
         <!-- 配置备份：导出 / 导入（跨设备迁移）。
              两个按钮的文本由代码下发：strings.xml 默认不改动，布局里留空避免硬编码文案进入资源 -->
