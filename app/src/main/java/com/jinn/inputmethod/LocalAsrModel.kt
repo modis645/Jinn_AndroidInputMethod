@@ -17,6 +17,14 @@ import java.io.File
 internal object LocalAsrModel {
 
     const val DIR_NAME = "local-asr"
+
+    /**
+     * silero VAD 模型（约 2 MB）：只用于**长句自动分句**，缺了不影响识别 ——
+     * 没有它时长句整段解码，有它就按静音切开逐句解码再拼回去（见 LocalSenseVoiceClient）。
+     */
+    const val VAD_FILE = "silero_vad.onnx"
+    const val VAD_URL =
+        "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx"
     const val MODEL_FILE = "model.int8.onnx"
     const val TOKENS_FILE = "tokens.txt"
 
@@ -31,6 +39,11 @@ internal object LocalAsrModel {
     fun modelFile(context: Context): File = File(dir(context), MODEL_FILE)
 
     fun tokensFile(context: Context): File = File(dir(context), TOKENS_FILE)
+
+    fun vadFile(context: Context): File = File(dir(context), VAD_FILE)
+
+    /** VAD 是可选件：缺了降级为「整段解码」，所以不参与 [isReady] 判定 */
+    fun hasVad(context: Context): Boolean = vadFile(context).let { it.isFile && it.length() > 0 }
 
     /** 两件文件都在才算就绪（只看存在性，完整性由下载端的 sha256 / 大小校验保证） */
     fun isReady(context: Context): Boolean =
