@@ -37,6 +37,9 @@ import kotlin.math.roundToInt
  * 声明写在后半段时构造函数读到的是 null —— 2026-11-15 真机崩溃栈正是
  * `Paint.measureText: text cannot be null`（buildTextIcon 收到 null 标签）。
  */
+private const val TEXT_VOICE_KEY_IDLE = "语音"
+private const val TEXT_VOICE_KEY_LISTEN = "聆听中"
+private const val TEXT_VOICE_KEY_CANCEL = "松开取消"
 private const val TEXT_SHIFT_SPLIT = "分词"
 private const val TEXT_SHIFT_UPPER = "大写"
 
@@ -882,8 +885,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private val btnBackspace: View
     private val btnEnter: View
     private val btnShift: ImageButton
-    private val btnComma: TextView
-    private val btnPeriod: TextView
+    /** 合并键「，。」：短按出逗号、长按出句号（腾出的一格给了长语音键） */
+    private val btnCommaPeriod: TextView
+    /** 长语音键：按住说一整段，键内显示实时电平条 */
+    private val btnVoiceLong: View
+    private val btnVoiceLabel: TextView?
+    private val btnVoiceLevel: View?
 
     /**
      * 分号键（第三行 m 右侧）。
@@ -1305,8 +1312,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 这枚键现在发的是音节分隔符，继续用原来的「↑ 箭头」会让人以为它还是大写 ——
         // 图标改画成「分词」两个字（白色字形 + 既有的 imageTintList 着色，颜色跟其他功能键一致）
         btnShift.setImageDrawable(buildTextIcon("分词"))
-        btnComma = root.findViewById(R.id.key_comma)
-        btnPeriod = root.findViewById(R.id.key_period)
+        btnCommaPeriod = root.findViewById(R.id.key_comma_period)
+        btnVoiceLong = root.findViewById(R.id.key_voice_long)
+        btnVoiceLabel = root.findViewById(R.id.key_voice_label)
+        btnVoiceLevel = root.findViewById(R.id.key_voice_level)
         keySemicolon = root.findViewById(R.id.key_semicolon)
         keySemicolon.label = SEMICOLON_KEY.toString()
         // 无障碍激活：与字母键同款；触摸路径的可见性 / 命中判定由触摸监听自己负责，
@@ -1934,7 +1943,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 走 `clearComposingState()`，会连用户正在打的搜索词一起清掉（L-1443）。
         // 口径对齐固定数字行（同一处分支写法），不是对齐数字层 —— 后者是**无条件**调用，
         // 靠 `commitComposing()` 内部早退兜住，形态不同不可照抄。
-        btnComma.setOnClickListener {
+        btnCommaPeriod.setOnClickListener {
             KeyFeedback.fire(TapSound.G_SYMBOL)
             val text = if (englishMode) prefs.punctCommaEn else prefs.punctCommaCn
             if (isPanelSearch()) {
@@ -1946,7 +1955,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 listener?.onCommitText(text)
             }
         }
-        btnPeriod.setOnClickListener {
+        // 合并键「，。」的长按 = 句号（与搜狗/微信同款分工：短按逗号、长按句号）。
+        // 原先「长按逗号在光标处插音节分隔符」让位给句号 —— 分隔符仍可从拼音条与分词键进入，
+        // 而合并键上必须保住标点的两个高频动作。
+        btnCommaPeriod.setOnLongClickListener {
             KeyFeedback.fire(TapSound.G_SYMBOL)
             val text = if (englishMode) prefs.punctPeriodEn else prefs.punctPeriodCn
             if (isPanelSearch()) {
@@ -1955,14 +1967,40 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 commitComposing()
                 listener?.onCommitText(text)
             }
+            true
         }
-        // 长按「，」= 在**光标处**补一道音节分隔符（自动切分切错时的手动纠正）。
-        // 前提是先点过拼音条把光标放好（那里正是要断开的位置）；没光标就不接管，让长按无动作，
-        // 短按出逗号的原有行为完全不受影响。
-        btnComma.setOnLongClickListener {
-            if (englishMode || composing.isEmpty() || layer != LAYER_LETTER) return@setOnLongClickListener false
-            if (pinyinCaret <= 0 || pinyinCaret >= composing.length) return@setOnLongClickListener false
-            insertSeparator(pinyinCaret)
+        // 长语音键：按住就说，与空格长按共用同一条录音链路（这里不消费「短按」，短按无动作）。
+        btnVoiceLong.setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    voiceHoldDownRawY = event.rawY
+                    cancelVoiceHold()
+                    listener?.onVoicePrepare()
+                    if (listener?.canVoice() == true) {
+                        KeyFeedback.fire(TapSound.G_CONFIRM)
+                        if (listener?.onVoiceHoldStart() == true) {
+                            voiceHoldActive = true
+                            voiceHoldCancelArmed = false
+                            updateSpaceHint()
+                        }
+                    }
+                }
+
+                MotionEvent.ACTION_MOVE -> if (voiceHoldActive) {
+                    val armed = voiceHoldDownRawY - event.rawY > voiceCancelSlidePx()
+                    if (armed != voiceHoldCancelArmed) {
+                        voiceHoldCancelArmed = armed
+                        updateSpaceHint()
+                        listener?.onVoiceHoldUpdate(armed)
+                    }
+                }
+
+                MotionEvent.ACTION_UP ->
+                    if (voiceHoldActive) endVoiceHold(cancelled = voiceHoldCancelArmed)
+
+                MotionEvent.ACTION_CANCEL ->
+                    if (voiceHoldActive) endVoiceHold(cancelled = true)
+            }
             true
         }
     }
@@ -2520,7 +2558,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         refreshShiftTint()
         // 底部次级功能键（符号 / 数字 / 逗号 / 句号 / 中英）：面随皮肤变深 / 变浅（见
         // rebuildFunctionKeyBackgrounds），文字必须同源，否则默认的深色字会落在皮肤的深色面上
-        for (v in listOf(btnSymbol, btnDigit, btnComma, btnPeriod, btnLang)) {
+        for (v in listOf(btnSymbol, btnDigit, btnCommaPeriod, btnLang)) {
             (v as? TextView)?.setTextColor(glyph)
         }
         // 密码模式下「数字」键已变成「退出」：换肤路径也要保持提示红，
@@ -2706,7 +2744,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 描边按原 alpha **比例缩放**（不是替换）：磨砂 / 石墨等皮肤的 functionStroke 自带 alpha
         // （0x33 / 0x1F…），替换语义会在默认档把它们抹成实色硬边（BUG.md 第 15 批 M1）。
         val stroke = KeyTransparency.scaleAlpha(skinToken(skin.functionStroke, R.color.card_stroke), keyFaceAlpha)
-        for (v in listOf<View>(btnSymbol, btnDigit, btnComma, btnPeriod, btnLang)) {
+        for (v in listOf<View>(btnSymbol, btnDigit, btnCommaPeriod, btnLang)) {
             v.background = buildButtonBackground(fill, stroke)
         }
     }
@@ -2851,7 +2889,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         for ((name, v) in listOf(
             "symbol" to btnSymbol, "digit" to btnDigit, "lang" to btnLang,
             "space" to btnSpace, "backspace" to btnBackspace, "enter" to btnEnter,
-            "shift" to btnShift, "comma" to btnComma, "period" to btnPeriod,
+            "shift" to btnShift, "comma_period" to btnCommaPeriod, "voice_long" to btnVoiceLong,
         )) {
             val loc = IntArray(2)
             v.getLocationOnScreen(loc)
@@ -4128,7 +4166,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 29sp 起即落进本缺口（真机复现：挂 ▲、点开 2 排，修前按 40 条算 4 排）。
         val renderSource = renderedItems(inputNow.isEmpty())
         val renderItemCount = renderSource.size
-        val renderSample = renderSource.firstOrNull()
+        // 取**最长**的候选做宽度取样：展开态按「栏宽 ÷ 单条宽」算列数，取首个候选时
+        // 后面一旦出现长词（四字成语之类）网格就比屏幕宽，只能左右拖动 —— 用户 2026-11-16
+        // 明确不要左右拖动。按最长条目量，列数取的是能装下的下界，横向不溢出。
+        val renderSample = renderSource.asSequence().take(40).maxByOrNull { it.length }
         if (CandidateRows.shouldCollapseExpanded(lastCandidatesInput, inputNow)) {
             // 注意：这里**不能**再插值 composing / lastCandidatesInput：I 级无条件落盘并进诊断包，
             // 等于把用户敲的拼音（含密码框内）长期留在可分享的诊断包里；且每键一次主线程写盘
@@ -4816,8 +4857,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
         }
         // 底部逗号 / 句号：默认拼音态全角（，。）、英文态半角（,.），用户可在「键盘外观自选」页
         // 自定义成任意单字符（中文 / 英文两套分开，见 [Prefs] 的四个标点键）；样式见 applyPunctuationLabel
-        applyPunctuationLabel(btnComma, cn = prefs.punctCommaCn, en = prefs.punctCommaEn)
-        applyPunctuationLabel(btnPeriod, cn = prefs.punctPeriodCn, en = prefs.punctPeriodEn)
+        // 合并键「，。」：键面直接显示两个标点（用户自定义的字符照旧生效，顺序是 逗号+句号）
+        applyPunctuationLabel(
+            btnCommaPeriod,
+            cn = prefs.punctCommaCn + prefs.punctPeriodCn,
+            en = prefs.punctCommaEn + prefs.punctPeriodEn,
+        )
         // 大写锁定：shift 键高亮（背景按设置页的圆角参数动态重建）；
         // 符号层大写键不参与操作：isEnabled=false（无障碍也报「不可用」）+ 置灰，
         // 点击路径另有层守卫（见 bindFunctionKeys），二者互为兜底。
@@ -4936,10 +4981,42 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 的死路（那一点由 IME 出声提示）。
         val micRes = R.drawable.ic_space_mic
         btnSpaceLabel?.setCompoundDrawablesWithIntrinsicBounds(0, 0, micRes, 0)
+        // 长语音键：录音中键面写「聆听中」，上滑到取消区写「松开取消」。
+        // 用户看不到录音过程，只能靠键面知道「还在收」还是「要取消」（2026-11-16 需求）。
+        btnVoiceLabel?.text = when {
+            !voiceHoldActive -> TEXT_VOICE_KEY_IDLE
+            voiceHoldCancelArmed -> TEXT_VOICE_KEY_CANCEL
+            else -> TEXT_VOICE_KEY_LISTEN
+        }
+        if (!voiceHoldActive) setVoiceLevel(0f)
         // 英文键盘没有子 TextView，`key_space` 自己就是文本：同一枚角标挂它身上
         (btnSpace as? TextView)?.let {
             it.compoundDrawablePadding = (3f * resources.displayMetrics.density).toInt()
             it.setCompoundDrawablesWithIntrinsicBounds(0, 0, micRes, 0)
+        }
+    }
+
+    /**
+     * IME 侧的实时录音电平（0..1）打进来，画成长语音键里的电平条。
+     *
+     * 只在长按态生效：没在录音时这条必须是空的，否则「键盘自己在录音」的观感会误导用户。
+     */
+    fun updateVoiceLevel(level: Float) {
+        if (!voiceHoldActive) return
+        setVoiceLevel(level)
+    }
+
+    private fun setVoiceLevel(level: Float) {
+        val bar = btnVoiceLevel ?: return
+        val host = btnVoiceLong.width
+        if (host <= 0) return
+        val maxW = host - dpFloat(12f).toInt()
+        if (maxW <= 0) return
+        val w = (maxW * level.coerceIn(0f, 1f)).toInt()
+        val lp = bar.layoutParams ?: return
+        if (lp.width != w) {
+            lp.width = w
+            bar.layoutParams = lp
         }
     }
 
