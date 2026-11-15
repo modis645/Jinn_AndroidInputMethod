@@ -103,6 +103,9 @@ class UserDictActivity : ComponentActivity() {
     @Volatile
     private var rows: List<Row> = emptyList()
 
+    /** 从设置页「一键导出词库」进来：词表加载完成后直接弹格式选择 */
+    private var autoExportPending = false
+
     /**
      * 当前显示的对话框（同一时刻只可能有一个）。
      *
