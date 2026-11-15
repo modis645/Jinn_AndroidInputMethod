@@ -79,6 +79,7 @@ class VoiceSettingsActivity : ComponentActivity() {
     private lateinit var btnLocalAsrDelete: android.widget.Button
     private lateinit var btnLocalAsrImport: android.widget.Button
     private lateinit var btnLocalAsrLog: android.widget.Button
+    private lateinit var textLocalAsrLog: android.widget.TextView
     private lateinit var spinnerVoiceBackend: UserAwareSpinner
     private lateinit var editXfAppId: EditText
     private lateinit var editXfApiKey: EditText
@@ -318,6 +319,7 @@ class VoiceSettingsActivity : ComponentActivity() {
         btnLocalAsrDelete = findViewById(R.id.btn_local_asr_delete)
         btnLocalAsrImport = findViewById(R.id.btn_local_asr_import)
         btnLocalAsrLog = findViewById(R.id.btn_local_asr_log)
+        textLocalAsrLog = findViewById(R.id.text_local_asr_log)
         btnLocalAsrImport.text = TEXT_LOCAL_ASR_IMPORT
         spinnerVoiceBackend = UserAwareSpinner(this)   // 布局里已删除（在线语音下线，2026-11-15）：留给保存/回填逻辑一个空壳，界面上不可见
         editXfAppId = EditText(this)   // 布局里已删除（在线语音下线，2026-11-15）：留给保存/回填逻辑一个空壳，界面上不可见
@@ -832,6 +834,15 @@ class VoiceSettingsActivity : ComponentActivity() {
                 btnLocalAsrDelete.visibility = View.GONE
             }
         }
+        // 日志尾部直接摆在卡片里：用户「没反应」时截一张图，就能看出卡在哪个源、
+        // 是 DNS、403、还是校验不过（比让他复制粘贴可靠）
+        val tail = LocalAsrDownloader.logTail(this)
+        if (tail.isEmpty()) {
+            textLocalAsrLog.visibility = View.GONE
+        } else {
+            textLocalAsrLog.visibility = View.VISIBLE
+            textLocalAsrLog.text = tail
+        }
         // 有日志才露出「复制下载日志」：正常路径不看它，出问题时它是唯一能拿到的现场
         btnLocalAsrLog.visibility =
             if (!running && LocalAsrDownloader.logText(this).let { it.isNotBlank() && it != "（暂无日志）" }) {
@@ -897,6 +908,13 @@ class VoiceSettingsActivity : ComponentActivity() {
                     if (isFinishing || isDestroyed) return@runOnUiThread
                     textLocalAsrStatus.text = stage
                     btnLocalAsrDownload.text = TEXT_LOCAL_ASR_CANCEL
+                    // 阶段变化时同步刷新日志尾部：卡在建连时进度回调不会来，
+                    // 只有这里能把「卡在第几个源」显示出来
+                    val tail = LocalAsrDownloader.logTail(this)
+                    if (tail.isNotEmpty()) {
+                        textLocalAsrLog.visibility = View.VISIBLE
+                        textLocalAsrLog.text = tail
+                    }
                 }
             },
         )
