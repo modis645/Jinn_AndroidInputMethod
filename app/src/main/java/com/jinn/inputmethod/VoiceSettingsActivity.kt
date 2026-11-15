@@ -276,7 +276,6 @@ class VoiceSettingsActivity : ComponentActivity() {
         Diagnostics.i(TAG, "onCreate: 语音设置页启动")
 
         findViewById<TextView>(R.id.text_voice_title).text = TEXT_TITLE
-        findViewById<TextView>(R.id.text_voice_desc).text = TEXT_DESC
         findViewById<Button>(R.id.btn_voice_close).apply {
             text = PageChrome.CLOSE
             contentDescription = PageChrome.CLOSE_DESC
@@ -2008,10 +2007,6 @@ class VoiceSettingsActivity : ComponentActivity() {
          * 与默认键盘样式都是**改动即写盘**（原设置页的即时语义，见 `onCreate` 的四个监听器），
          * 保存只对总开关 / 后端 / 地址 / 端口 / 凭据 / 语言 / 提示词有意义。文案与行为必须一致。
          */
-        const val TEXT_DESC = "语音识别只在本机跑（sherpa-onnx + SenseVoice 整句模型），" +
-            "不连接任何服务器，也不需要任何 API Key。" +
-            "第一次使用先下载模型（约 170 MB）；下载不通时可以点「从本地导入」，" +
-            "把电脑上下好的 model.int8.onnx 与 tokens.txt 拷进来。勾选项与默认键盘样式改动即保存。"
 
         /** 识别后端选择（八张配置卡跟着切） */
         const val TEXT_BACKEND_LABEL = "识别服务"
