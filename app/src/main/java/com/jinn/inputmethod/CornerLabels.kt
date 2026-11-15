@@ -6,7 +6,7 @@ package com.jinn.inputmethod
  * 三排分别给「数字 / 中文标点与货币符 / 常用符号」，长按该键即上屏角标文字：
  * ```
  * q w e r t y u i o p     1 2 3 4 5 6 7 8 9 0
- * a s d f g h j k l       ，。$？！：；「」     （9 键）
+ * a s d f g h j k l       ，。$？！：；“”     （9 键）
  * z x c v b n m           （）、@#%&            （7 键）
  * ```
  * 只在中文拼音的字母层显示：英文态（字母就是正文）、大写锁定、符号层都不画。
@@ -18,7 +18,7 @@ package com.jinn.inputmethod
 object CornerLabels {
 
     /** 第 2 排（a..l，9 键）；D 键沿用幻影 26 键的 `$`，其余为中文标点 */
-    private val ROW2 = listOf("，", "。", "$", "？", "！", "：", "；", "「", "」")
+    private val ROW2 = listOf("，", "。", "$", "？", "！", "：", "；", "“", "”")
 
     /** 第 3 排（z..m，7 键） */
     private val ROW3 = listOf("（", "）", "、", "@", "#", "%", "&")
