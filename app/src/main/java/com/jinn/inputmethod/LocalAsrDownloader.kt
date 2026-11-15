@@ -89,6 +89,24 @@ internal object LocalAsrDownloader {
         connection = null
     }
 
+    /**
+     * 清掉**下载残留**的临时件（不是模型本身）。
+     *
+     * 模型落在 `filesDir/local-asr/`（应用数据，用户主动删或卸载才没），而 163 MB 的
+     * 归档与解包目录只是过程中的临时件，放 `cacheDir` 才是对的 —— 系统清理缓存时可以随手收回。
+     * 但进程被强杀 / 崩溃时这些临时件没人收，会白占一两百 MB，所以每次进语音设置页先扫一次。
+     *
+     * 有任务在跑时**一律不动**：那正是它正在写的文件。
+     */
+    fun sweepCache(context: Context) {
+        if (isRunning()) return
+        runCatching {
+            File(context.cacheDir, LocalAsrModel.ARCHIVE_NAME).delete()
+            File(context.cacheDir, "vad-download.onnx").delete()
+            File(context.cacheDir, "local-asr-unpack").deleteRecursively()
+        }.onFailure { Diagnostics.w("LocalAsr", "临时件清理失败: ${it.javaClass.simpleName}") }
+    }
+
     /** 删除已下载的模型（幂等）；返回是否真的删掉了东西 */
     fun delete(context: Context): Boolean {
         val dir = LocalAsrModel.dir(context)
