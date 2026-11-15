@@ -187,9 +187,12 @@
                 android:minWidth="0dp" />
         </LinearLayout>
 
-        <!-- 剪贴板自定义：独占一行的独立全屏页（2026-11-16 起「敲击音效反馈」入口已删） -->
+        <!-- 剪贴板自定义 / 图库快贴：两个独立全屏页，2026-11-17 起并到同一行，各占一半
+             （用户要求「和其它按钮一样」，不再各占一整行）。图库快贴子页面里有目录绑定 /
+             清除绑定 / 自动返回 / 缩略图布局；剪贴板自定义里有上限与保留策略。 -->
         <LinearLayout
-            style="@style/SettingsCardRow">
+            style="@style/SettingsCardRow"
+            android:baselineAligned="false">
 
             <Button
                 style="@style/SettingsButton"
@@ -197,19 +200,12 @@
                 android:layout_width="0dp"
                 android:layout_weight="1"
                 android:minWidth="0dp" />
-        </LinearLayout>
-
-        <!-- 图库快贴：目录绑定 / 清除绑定 / 自动返回 / 缩略图布局都收在子页面里。
-             2026-11-16 起同行右侧的「空格左右按钮」入口已删；卡片行容器仍保留（圆角底板与
-             边距都由 SettingsCardRow 提供，裸放 button 会与上下邻居长得不一样）。 -->
-        <LinearLayout
-            style="@style/SettingsCardRow"
-            android:baselineAligned="false">
 
             <Button
                 style="@style/SettingsButton"
                 android:id="@+id/btn_gallery_settings"
                 android:layout_width="0dp"
+                android:layout_marginStart="8dp"
                 android:layout_weight="1"
                 android:minWidth="0dp" />
         </LinearLayout>
@@ -241,20 +237,6 @@
                     android:layout_weight="1"
                     android:minWidth="0dp" />
             </LinearLayout>
-        </LinearLayout>
-
-        <!-- 一键导出用户词库（2026-11-17 用户要求）：直接进导出流程，省掉「进页面→再点导出」两步。
-             导出本身仍是原来那套（加密包 / 明文二选一、密码、SAF 保存位置、风险确认），一行不少。 -->
-        <LinearLayout
-            style="@style/SettingsCardRow"
-            android:baselineAligned="false">
-
-            <Button
-                style="@style/SettingsButton"
-                android:id="@+id/btn_export_user_dict"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:minWidth="0dp" />
         </LinearLayout>
 
         <!-- 悬浮键盘 / 语音转为文字：两个入口按钮同行，各占一半（用户第 2 条：
@@ -443,17 +425,33 @@
                 />
         </LinearLayout>
 
-        <!-- 导出诊断数据（单按钮，2026-09-25 定）：把日志目录打包，经系统文件选择器
-             存到用户自选位置。原「发给作者」分享按钮及其分享通道 / FileProvider 已移除。 -->
+        <!-- 一键导出词库 / 导出诊断数据：2026-11-17 起并到同一行，各占一半（用户要求）。
+             诊断包仍把日志目录打包、经系统文件选择器存到用户自选位置。 -->
         <LinearLayout
             style="@style/SettingsCard">
 
-            <Button
-                style="@style/SettingsButton"
-                android:id="@+id/btn_export_diag"
+            <LinearLayout
                 android:layout_width="match_parent"
-                android:minWidth="0dp"
-                android:text="@string/settings_export_diag" />
+                android:layout_height="wrap_content"
+                android:baselineAligned="false"
+                android:orientation="horizontal">
+
+                <Button
+                    style="@style/SettingsButton"
+                    android:id="@+id/btn_export_user_dict"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:minWidth="0dp" />
+
+                <Button
+                    style="@style/SettingsButton"
+                    android:id="@+id/btn_export_diag"
+                    android:layout_width="0dp"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:minWidth="0dp"
+                    android:text="@string/settings_export_diag" />
+            </LinearLayout>
 
             <TextView
                 style="@style/CardHint"
