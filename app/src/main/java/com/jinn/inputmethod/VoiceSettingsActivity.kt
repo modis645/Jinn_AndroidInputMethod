@@ -433,6 +433,7 @@ class VoiceSettingsActivity : ComponentActivity() {
                 parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long,
             ) {
                 applyBackendVisibility()
+        autoDownloadLocalAsrOnce()
                 refreshDirty()
                 scheduleAutosave()
             }
@@ -743,6 +744,20 @@ class VoiceSettingsActivity : ComponentActivity() {
      * 总开关关闭时全部藏（`enabled=false` 优先于后端选择）：字段不可见时保存也不校验
      * 它们（见 [saveAndRestart]），避免「关掉语音就再也存不了」。
      */
+    /**
+     * 本页第一次打开时，模型没装就自动开始下载（用户 2026-11-15：「应该安装以后自动下载模型」）。
+     *
+     * 只在没有现成文件、也没有在跑的任务时触发；本进程只自动试一次，失败后不反复重试 ——
+     * 失败仍由卡片上的按钮手动重试，避免弱网下无休止地拉 163 MB。
+     */
+    private fun autoDownloadLocalAsrOnce() {
+        if (autoDownloadTried) return
+        autoDownloadTried = true
+        if (LocalAsrModel.isReady(this) || LocalAsrDownloader.isRunning()) return
+        Diagnostics.i(TAG, "离线语音：模型缺失，自动开始下载")
+        startLocalAsrDownload()
+    }
+
     private fun applyBackendVisibility() {
         val enabled = switchVoiceInput.isChecked
         val backend = readBackend()
@@ -812,6 +827,15 @@ class VoiceSettingsActivity : ComponentActivity() {
             refreshLocalAsrStatus(0)
             return
         }
+        startLocalAsrDownload()
+    }
+
+    /**
+     * 真正发起一次下载（按钮与「打开本页自动下载」共用这一段）。
+     *
+     * 用 applicationContext：用户可能下载到一半就退出设置页，模型仍应下完（也不把 Activity 拖住）。
+     */
+    private fun startLocalAsrDownload() {
         refreshLocalAsrStatus(0)
         LocalAsrDownloader.download(
             // 用 applicationContext：用户可能下载到一半就退出设置页，模型仍应下完（也不把 Activity 拖住）
@@ -1919,10 +1943,12 @@ class VoiceSettingsActivity : ComponentActivity() {
     }
 
     private companion object {
+        /** 自动下载只在本进程试一次（见 [autoDownloadLocalAsrOnce]） */
+        private var autoDownloadTried = false
         const val TAG = "VoiceSettings"
 
         /** 页面标题（= 设置页入口按钮上的那句） */
-        const val TEXT_TITLE = "语音转为文字"
+        const val TEXT_TITLE = "离线语音"
 
         /** 页面说明。
          *
