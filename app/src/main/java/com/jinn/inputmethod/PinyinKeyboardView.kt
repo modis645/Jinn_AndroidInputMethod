@@ -1425,7 +1425,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 26 键同一根手指不会同时触发两件事。
      */
     private fun canLongPressCorner(c: Char): Boolean =
-        layer == LAYER_LETTER && !englishMode && !capsMode && CornerLabels.has(c)
+        layer == LAYER_LETTER && CornerLabels.has(c)
 
     /** 移除待触发的角标长按；只作用于 [g] 这一个键 */
     private fun cancelCornerPress(g: KeyGesture) {
@@ -4657,7 +4657,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
             key.subLabel = if (showHint) shuangpinHint(c) else ""
             // 右上角角标：只在中文拼音的字母层画（英文态字母就是正文、大写锁定同理）；
             // 符号层 / 数字层清空，免得符号页的键右上角还挂着数字
-            key.cornerLabel = if (layer == LAYER_LETTER && !englishMode && !capsMode) {
+            // 角标是中英文两态共用的：同一种键盘、同一个位置，换语言不该把键面符号抹掉
+            // （用户 2026-11-15：「字母角标符号，中英文状态下应该一致，都保留」）。
+            // 大写靠「分词」键（英文态单击就是它），不再依赖角标让位。
+            key.cornerLabel = if (layer == LAYER_LETTER) {
                 CornerLabels.of(c)
             } else {
                 ""
