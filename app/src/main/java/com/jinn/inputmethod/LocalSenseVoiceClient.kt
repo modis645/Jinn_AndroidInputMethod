@@ -275,51 +275,14 @@ internal class LocalSenseVoiceClient(
     private fun finishText(raw: String): String = VoiceText.finishText(raw)
 
     /** 10ms 一帧的 RMS（0..1，float 域）；不足一帧的尾巴丢掉（对回补判据无影响） */
-    private fun frameEnergies(samples: FloatArray): FloatArray {
-        val frame = SAMPLE_RATE / 100
-        if (frame <= 0 || samples.size < frame) return FloatArray(0)
-        val count = samples.size / frame
-        val out = FloatArray(count)
-        for (f in 0 until count) {
-            var sum = 0.0
-            val base = f * frame
-            for (j in 0 until frame) {
-                val v = samples[base + j]
-                sum += v * v
-            }
-            out[f] = kotlin.math.sqrt(sum / frame).toFloat()
-        }
-        return out
-    }
+    private fun frameEnergies(samples: FloatArray): FloatArray = VoiceDsp.frameEnergies(samples)
 
-    /**
-     * 段首回推到第几帧（返回采样下标）。
-     *
-     * [floorSample] = 上一段的段尾：两段音频绝不重叠，否则同一句话会被解码两遍、上屏两次。
-     * 规则与沙鸥逐项对齐：先无条件往前 0.3 秒（气声没有能量但确属语音），之后沿「语音帧」继续走，
-     * 途中允许最多 0.25 秒的低能量间隙，总回补不超过 3 秒。
-     */
-    private fun onsetBacktrack(frameRms: FloatArray, speechRms: Float, segStart: Int, floorSample: Int): Int {
-        val frame = SAMPLE_RATE / 100
-        if (frame <= 0 || frameRms.isEmpty()) return segStart
-        val startFrame = (segStart / frame).coerceIn(0, frameRms.size)
-        val floorFrame = (floorSample / frame).coerceAtLeast(0)
-        var idx = startFrame
-        var steps = 0
-        var gap = 0
-        while (idx > floorFrame && idx > 0 && steps <= ONSET_MAX_BACK_FRAMES) {
-            val loud = frameRms[idx - 1] >= speechRms
-            when {
-                steps < ONSET_ALWAYS_FRAMES -> Unit          // 无条件补的 0.3 秒
-                loud -> gap = 0                              // 语音继续，间隙清零
-                gap < ONSET_GAP_FRAMES -> gap++               // 低能量但还在容忍窗口内
-                else -> break                                // 彻底掉出语音段，停
-            }
-            idx--
-            steps++
-        }
-        return idx * frame
-    }
+    private fun onsetBacktrack(
+        frameRms: FloatArray,
+        speechRms: Float,
+        segStart: Int,
+        floorSample: Int,
+    ): Int = VoiceDsp.onsetBacktrack(frameRms, speechRms, segStart, floorSample)
 
     /** PCM16（小端）→ float32 归一化到 [-1,1]；逐采样 1/32768 换算，不做重采样（采集端已是 16k） */
     private fun pcm16ToFloat(pcm16: ByteArray): FloatArray {
@@ -344,14 +307,10 @@ internal class LocalSenseVoiceClient(
     internal companion object {
         const val SAMPLE_RATE = 16_000
 
-        /** 段首无条件回补的帧数（0.3s × 100 帧/秒） */
-        const val ONSET_ALWAYS_FRAMES = 30
-
-        /** 回补途中容忍的低能量间隙（0.25s） */
-        const val ONSET_GAP_FRAMES = 25
-
-        /** 单段最多回补多少帧（3s），防止一口气把整段话都吞进来 */
-        const val ONSET_MAX_BACK_FRAMES = 300
+        /** 段首回补参数与帧能量计算都在 [VoiceDsp]，这里只保留对外引用 */
+        const val ONSET_ALWAYS_FRAMES = VoiceDsp.ONSET_ALWAYS_FRAMES
+        const val ONSET_GAP_FRAMES = VoiceDsp.ONSET_GAP_FRAMES
+        const val ONSET_MAX_BACK_FRAMES = VoiceDsp.ONSET_MAX_BACK_FRAMES
 
         /** 低于这个长度（约 4 秒）不值得走 VAD：切出来的句子和整段解码差别不大 */
         const val MIN_VAD_SAMPLES = 4 * SAMPLE_RATE
