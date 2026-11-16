@@ -1107,47 +1107,12 @@ class Prefs(private val appContext: Context) {
         }
 
     /**
-     * 当前语音后端是否**可用**（配好就能录音识别）。
+     * 语音是否**可用**（配好就能录音识别）。
      *
-     *  - [VoiceBackend.CAPS]：host 合法即算配好（地址由 getter 兜底，非法值回落默认）；
-     *  - [VoiceBackend.XF]：三件凭据都非空；
-     *  - [VoiceBackend.OAI]：地址过策略（[OpenAiEndpoint.normalize]）+ Key + 模型名非空；
-     *  - [VoiceBackend.ALI]：地址过策略（[AliEndpoint.normalize]）+ Key + 模型名非空；
-     *  - [VoiceBackend.TENCENT]：SecretId 与 SecretKey 都非空（引擎有默认值，不需要守卫）；
-     *  - [VoiceBackend.AZURE]：地址过策略（[AzureAsrEndpoint.normalize]）+ 订阅密钥非空；
-     *  - [VoiceBackend.BAIDU]：AK 与 SK 都非空（dev_pid 有默认值，不需要守卫）；
-     *  - [VoiceBackend.DEEPGRAM]：API Key 非空（模型 / 语言有默认值）。
-     *
-     * 判据只回答「配置齐不齐」，不联网探测：真连通性由状态条与客户端回包反馈。
+     * 2026-11-17 定版：只内置离线识别，所以判据只有一条 —— 模型文件是否就位。
+     * 不联网探测：真连通性由状态条与客户端回包反馈。
      */
-    fun voiceConfigured(): Boolean = when (voiceBackend) {
-        VoiceBackend.LOCAL -> LocalAsrModel.isReady(context)
-
-        VoiceBackend.XF -> xfAppId.cleanCredential().isNotEmpty() &&
-            xfApiKey.cleanCredential().isNotEmpty() &&
-            xfApiSecret.cleanCredential().isNotEmpty()
-
-        VoiceBackend.OAI -> OpenAiEndpoint.normalize(oaiBaseUrl).isSuccess &&
-            oaiApiKey.cleanCredential().isNotEmpty() &&
-            oaiModel.isNotEmpty()
-
-        VoiceBackend.ALI -> AliEndpoint.normalize(aliWsUrl).isSuccess &&
-            aliApiKey.cleanCredential().isNotEmpty() &&
-            aliModel.isNotEmpty()
-
-        VoiceBackend.TENCENT -> tencentSecretId.cleanCredential().isNotEmpty() &&
-            tencentSecretKey.cleanCredential().isNotEmpty()
-
-        VoiceBackend.AZURE -> AzureAsrEndpoint.normalize(azureBaseUrl).isSuccess &&
-            azureSpeechKey.cleanCredential().isNotEmpty()
-
-        VoiceBackend.BAIDU -> baiduSpeechApiKey.cleanCredential().isNotEmpty() &&
-            baiduSpeechSecretKey.cleanCredential().isNotEmpty()
-
-        VoiceBackend.DEEPGRAM -> deepgramApiKey.cleanCredential().isNotEmpty()
-
-        else -> isValidHost(host)
-    }
+    fun voiceConfigured(): Boolean = LocalAsrModel.isReady(context)
 
     /**
      * 拼接后的 WebSocket 地址。
