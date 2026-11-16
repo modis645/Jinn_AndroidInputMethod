@@ -203,10 +203,10 @@ class TestSourcesTest {
     fun 源码对拍守卫必须走共用助手() {
         val dir = testDir()
         val mustDelegate = listOf(
-            "OptionalDictJunkTest.kt", "PanelRebuildWorkTest.kt", "RecentFixesRegressionTest.kt",
+            "OptionalDictJunkTest.kt", "PanelRebuildWorkTest.kt",
             "RuntimeStateSyncTest.kt", "MirroredSettingsPagesTest.kt", "RareCharsFilterTest.kt",
-            "NetworkPolicyTest.kt", "ClipboardKeysetPagingTest.kt", "ThemeDeferralOverlayTest.kt",
-            // 2026-09-29 元守卫筛出来的第二批（原以为只有四份副本）：
+            "ClipboardKeysetPagingTest.kt", "ThemeDeferralOverlayTest.kt",
+            // 2026-11-16：RecentFixesRegressionTest.kt / NetworkPolicyTest.kt 随在线语音与在线翻译下线一并删除
             "ClipboardClassifierExtractTest.kt", "DynamicSymbolsTest.kt", "PanelTimesTest.kt",
             // 第三批（L-128 审计轮）：对拍的是 `tools/**.py`，必须走 pyCode / rawSource
             "BuildToolGatesTest.kt",
