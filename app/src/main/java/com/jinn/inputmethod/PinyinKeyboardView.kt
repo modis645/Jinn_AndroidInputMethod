@@ -2146,9 +2146,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val typedKey = composing.toString().replace(PinyinEngine.SEPARATOR_CHAR.toString(), "")
         // 不够门槛：这次只计数（下次再选同词会自动累加，够数自然收）
         if (!PinyinEngine.shouldAdmitUserWord(word, typedKey)) return
-        SelectionLedger.record(PinyinEngine.toSimplified(word), pinyin)
+        // 读音兜底（2026-11-16）：自造词在词库里本来就不存在，`truePinyinOf()` 给不出读音，
+        // 台账里就成了「有词无读音」的行 —— 那种行永远进不了候选（全拼、首字母都不出）。
+        // 用户是全拼把这个词敲出来的，键入串就是它的读音，直接用。
+        val reading = pinyin.ifEmpty { PinyinEngine.readingFromTyped(word, typedKey).orEmpty() }
+        SelectionLedger.record(PinyinEngine.toSimplified(word), reading)
         // 立刻进候选池（不必等下次启动）：自造词当场就能用，否则用户「造了词还是打不出来」
-        PinyinEngine.noteUserWord(word, pinyin)
+        PinyinEngine.noteUserWord(word, reading)
     }
 
     /**
