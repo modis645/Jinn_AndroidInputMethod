@@ -747,7 +747,11 @@ class JinnIme : InputMethodService() {
                         .getOrDefault(false)
                     Diagnostics.i(TAG, "离线语音: 进程启动自检，自愈 fixed=$fixed ${LocalAsrModel.audit(applicationContext).line()}")
                 }
-                if (LocalAsrModel.isReady(applicationContext)) return@runCatching
+                if (LocalAsrModel.isReady(applicationContext)) {
+                    // 已就绪但缺分句模型（640KB 可选件）：顺手补一次，失败只记日志
+                    LocalAsrDownloader.ensureVad(applicationContext)
+                    return@runCatching
+                }
                 if (LocalAsrDownloader.isRunning()) return@runCatching
                 Diagnostics.i(TAG, "离线语音: 进程启动，自动开始下载模型")
                 LocalAsrDownloader.download(
