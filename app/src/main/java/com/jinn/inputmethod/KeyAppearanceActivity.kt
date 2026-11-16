@@ -707,8 +707,6 @@ class KeyAppearanceActivity : Activity() {
 
     /** 2026-10-09 由设置页迁入的四组控件文案（同上：代码下发，见 [TEXT_SPACING_TITLE] 的说明） */
     const val TEXT_CANDIDATE_ROWS_TITLE = "候选词的行数"
-    const val TEXT_KEY_HINT_TITLE = "键盘内显韵母"
-    const val TEXT_QUANPIN_TITLE = "双拼候选全音"
     const val TEXT_THEME_TITLE = "界面明暗切换"
 
     /** 圆角 / 间隙 / 透明三项的标题（2026-10-09 按需求统一带「按钮 / 面板」前缀） */
