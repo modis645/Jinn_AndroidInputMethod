@@ -81,15 +81,15 @@ class KeyAppearanceTest {
     /** 默认值（圆角 5dp / 间隙 2dp / 字距 12dp / 键高 66dp）落在定义域内且恰在步进网格上 */
     @Test
     fun defaults_areInsideDomainAndOnStepGrid() {
-        assertEquals(5f, KeyAppearance.DEFAULT_CORNER_DP, 0f)
-        assertEquals(2f, KeyAppearance.DEFAULT_GAP_DP, 0f)
+        assertEquals(7f, KeyAppearance.DEFAULT_CORNER_DP, 0f)
+        assertEquals(2.5f, KeyAppearance.DEFAULT_GAP_DP, 0f)
         // 字距默认 12dp（2026-10-02 定 10dp，2026-10-21 随默认键高一起调档）
         assertEquals(12f, KeyAppearance.DEFAULT_SPACING_DP, 0f)
-        // 键高默认 66dp：XML 三个行容器必须同值。XML 只是默认档占位（configure() 在视图入窗口
+        // 键高默认 48dp：XML 三个行容器必须同值。XML 只是默认档占位（configure() 在视图入窗口
         // 之前就按 prefs 落过行高，当前路径不会拿它测量），但占位与真源分叉后「两份值一致」这条
         // 约定就失效了。XML 那一半由 `CandidateRowsTest.布局尺寸与代码常量逐项一致` 机械对拍，
         // 这里只钉常量本身。
-        assertEquals(66f, KeyAppearance.DEFAULT_KEY_HEIGHT_DP, 0f)
+        assertEquals(48f, KeyAppearance.DEFAULT_KEY_HEIGHT_DP, 0f)
         assertEquals(90f, KeyAppearance.MAX_KEY_HEIGHT_DP, 0f)
         assertTrue(KeyAppearance.DEFAULT_KEY_HEIGHT_DP in KeyAppearance.MIN_KEY_HEIGHT_DP..KeyAppearance.MAX_KEY_HEIGHT_DP)
         assertTrue(KeyAppearance.DEFAULT_CORNER_DP in KeyAppearance.MIN_CORNER_DP..KeyAppearance.MAX_CORNER_DP)
