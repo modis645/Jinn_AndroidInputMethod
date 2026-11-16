@@ -532,6 +532,9 @@ class JinnIme : InputMethodService() {
     override fun onCreate() {
         super.onCreate()
         Diagnostics.init(this)
+        // 语音阶段打点写进常规日志（随诊断包外发，只有阶段与毫秒数，不含识别正文）
+        VoiceTrace.sink = { line -> Diagnostics.i(TAG, "VoiceTrace $line") }
+        VoiceTrace.reset()
         // 半透明键盘：IME 窗口的默认格式是 OPAQUE(-1)/TRANSPARENT(-2)，合成器按「不透明窗口」
         // 处理，键面的 alpha 只会与窗口内部底色混合、透不出后面的应用（真机症状：改透明度毫无变化）。
         // 必须在窗口首次显示前把它改成 TRANSLUCENT(-3)，窗口才具备真正的 alpha 通道。
@@ -4250,6 +4253,7 @@ class JinnIme : InputMethodService() {
         // 请求音频焦点：被抢占时自动停止录音，避免与其他音频源冲突
         requestAudioFocus()
 
+        VoiceTrace.begin("dictation")
         if (asr?.beginTask() == null) {
             // 未连接：已请求的焦点要释放，避免占用却不录音
             // ⚠ 懒连接后要区分两种「未就绪」（MEM-13）：连接**正在进行**与确实连不上，
@@ -4528,6 +4532,9 @@ class JinnIme : InputMethodService() {
         voiceComposingShown = false
         // 只记字数不记正文：日志文件落在外部存储，且会随「导出诊断包」整体外发
         Diagnostics.i(TAG, "handleResult: 最终结果 共${message.text.length}字")
+        // 阶段汇总：一眼看出「慢」是在建识别器、等第一句，还是上屏这一步
+        VoiceTrace.mark("committed", "chars=${text.length}")
+        Diagnostics.i(TAG, "语音时延 " + VoiceTrace.summary())
         connection.commitText(text, 1)
         setHint(getString(if (text.isBlank()) R.string.hint_empty else R.string.hint_done))
         // 自动续说：会话还在、且没有新的一轮在录（用户可能已自己点开），就接着录下一句。
@@ -4550,8 +4557,7 @@ class JinnIme : InputMethodService() {
     }
 
     /** 对齐桌面端 trash_punc：句尾的逗号句号在聊天场景里更像噪音 */
-    private fun stripTrailingPunc(text: String): String =
-        text.trimEnd().trimEnd(*TRAILING_PUNC)
+    private fun stripTrailingPunc(text: String): String = VoiceText.stripTrailingPunc(text)
 
     // ── 编辑键 ────────────────────────────────────────────────
 
@@ -5220,8 +5226,7 @@ class JinnIme : InputMethodService() {
         const val BACKSPACE_REPEAT_MS = 55L
 
         /** 对齐 config_client.py 的 trash_punc */
-        val TRAILING_PUNC = charArrayOf('，', '。', ',', '.')
-    }
+        }
 }
 
 /**
