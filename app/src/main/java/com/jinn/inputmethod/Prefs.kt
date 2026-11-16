@@ -43,25 +43,24 @@ object VoiceBackend {
     /** 出厂默认：本机离线（不联网、不要凭据）。模型未下载时状态条会直接说「缺哪件」 */
     const val DEFAULT = LOCAL
 
-    /** 归一：除下列合法取值之外的一切（脏配置 / 手改 prefs / 更高版本）都落回 [CAPS] */
-    fun of(raw: String?): String = when (raw) {
-        XF -> XF
-        OAI -> OAI
-        ALI -> ALI
-        TENCENT -> TENCENT
-        AZURE -> AZURE
-        BAIDU -> BAIDU
-        DEEPGRAM -> DEEPGRAM
-        LOCAL -> LOCAL
-        else -> CAPS
-    }
+    /**
+     * 归一：2026-11-16 起只剩离线引擎一条路，任何取值都归到 [LOCAL]。
+     *
+     * 上游的六家/自建常量仍留着（老备份导入要靠它们认键名，见 `importFromBackup`），
+     * 但**不再有**「合法在线后端」这回事：覆盖安装带进来的旧值、手改 prefs 的脏值、
+     * 更高版本写下的未知值，一律当离线处理 —— 否则一台只装了离线模型的设备会去走
+     * 在线时长口径与在线文案。
+     */
+    fun of(@Suppress("UNUSED_PARAMETER") raw: String?): String = LOCAL
 
     /**
-     * 是否**在线后端**（讯飞 / OpenAI 兼容 / 阿里百炼 / 腾讯云 / Azure / 百度 / Deepgram）。
-     * 单次音频都有 60 秒级上限，到点必须自动收尾（见 `JinnIme.autoStopDelayMs`）；
-     * 自建服务端按连接持有缓冲，可以长跑。离线后端同样按本地缓冲整段解码，没有网络超时。
+     * 是否**在线后端**：恒为 false —— 在线语音（讯飞 / OpenAI 兼容 / 阿里百炼 / 腾讯云 /
+     * Azure / 百度 / Deepgram）已整体下线，现存的唯一后端是本机离线识别。
+     *
+     * 保留这个函数（而不是删掉调用点）是因为它还是「超时口径只有一个来源」的判据：
+     * 各调用点读它取时长，将来真加回在线后端时只需要改这里。
      */
-    fun isOnline(raw: String?): Boolean = of(raw) != CAPS && of(raw) != LOCAL
+    fun isOnline(@Suppress("UNUSED_PARAMETER") raw: String?): Boolean = false
 }
 
 /**
@@ -632,7 +631,7 @@ class Prefs(private val appContext: Context) {
         set(value) = sp.edit { putFloat(KEY_CANDIDATE_SPACING_DP, KeyAppearance.clampSpacingDp(value)) }
 
     /**
-     * 候选文字字号（sp，默认 28sp）：**整个候选栏按它派生** —— 行高、拼音条高度、栏高
+     * 候选文字字号（sp，默认 23sp）：**整个候选栏按它派生** —— 行高、拼音条高度、栏高
      * 都由 [CandidateRows] 按本值算（见 [CandidateText] 的定义域说明）。
      *
      * getter 也做一次钳位（与圆角 / 间隙 / 字距 / 透明度四个兄弟键同款）：手改 prefs、
