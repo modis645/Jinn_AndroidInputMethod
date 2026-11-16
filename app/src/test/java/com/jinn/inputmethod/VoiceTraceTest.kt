@@ -64,13 +64,20 @@ class VoiceTraceTest {
     }
 
     @Test
-    fun `未开始时不产生阶段记录`() {
+    fun `未开始时汇总说明未开始`() {
         VoiceTrace.reset()
         VoiceTrace.sink = { lines.add(it) }
         assertNull("未 begin 就没有模型阶段", VoiceTrace.lastMs("model present"))
+        assertTrue("此时汇总要写明未开始", VoiceTrace.summary().contains("未开始"))
+    }
+
+    @Test
+    fun `未 begin 直接打点也不丢记录`() {
+        VoiceTrace.reset()
+        VoiceTrace.sink = { lines.add(it) }
         VoiceTrace.mark("model present")
-        assertTrue("未 begin 时也该安全落一行", lines.isNotEmpty())
-        assertTrue("汇总要说明未开始", VoiceTrace.summary().contains("未开始"))
+        assertTrue("未 begin 时也要安全落一行", lines.isNotEmpty())
+        assertNotNull("打点即开始计时，阶段必须可读", VoiceTrace.lastMs("model present"))
     }
 
     @Test
@@ -80,5 +87,6 @@ class VoiceTraceTest {
         // 灌一堆杂阶段，塞满上限后仍能读出关键阶段
         for (i in 0 until 20) VoiceTrace.mark("extra$i")
         assertNotNull("关键阶段必须还在", VoiceTrace.lastMs("model present"))
+        assertEquals("超过上限的杂阶段不再记录", null, VoiceTrace.lastMs("extra19"))
     }
 }
