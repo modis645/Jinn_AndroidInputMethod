@@ -7,6 +7,7 @@ import com.k2fsa.sherpa.onnx.OfflineSenseVoiceModelConfig
 import com.k2fsa.sherpa.onnx.SileroVadModelConfig
 import com.k2fsa.sherpa.onnx.Vad
 import com.k2fsa.sherpa.onnx.VadModelConfig
+import android.content.Context
 import java.io.File
 
 /**
@@ -36,56 +37,100 @@ internal class LocalSenseVoiceClient(
     override fun prepare(): String? = LocalAsrModel.problem(prefs.context)
 
     override fun recognize(wav: ByteArray, pcm16: ByteArray): BatchOutcome {
-        val model = LocalAsrModel.modelFile(prefs.context)
-        val tokens = LocalAsrModel.tokensFile(prefs.context)
-        if (!model.isFile || !tokens.isFile) {
+        if (!LocalAsrModel.modelFile(prefs.context).isFile ||
+            !LocalAsrModel.tokensFile(prefs.context).isFile
+        ) {
             return BatchOutcome.Fail("离线模型未就绪")
         }
-        val samples = pcm16ToFloat(pcm16)
-        if (samples.isEmpty()) return BatchOutcome.Ok("")
-
-        val recognizer = synchronized(lock) {
-            val cached = cachedRecognizer
-            if (cached != null && cachedModelPath == model.absolutePath &&
-                cachedModelStamp == model.lastModified()
-            ) {
-                cached
-            } else {
-                cachedRecognizer?.release()
-                val config = OfflineRecognizerConfig(
-                    modelConfig = OfflineModelConfig(
-                        senseVoice = OfflineSenseVoiceModelConfig(
-                            model = model.absolutePath,
-                            // 中英混说是常态，交给模型自己判语种
-                            language = "auto",
-                            useInverseTextNormalization = true,
-                        ),
-                        tokens = tokens.absolutePath,
-                        numThreads = 2,
-                        debug = false,
-                        provider = "cpu",
-                    ),
-                )
-                OfflineRecognizer(config = config).also {
-                    cachedRecognizer = it
-                    cachedModelPath = model.absolutePath
-                    cachedModelStamp = model.lastModified()
-                }
-            }
-        }
-
         val started = System.currentTimeMillis()
-        // 长句先按静音切句：silero VAD 把整段切成若干句话，逐句解码再拼回去。
-        // 好处是每句都在 8 秒以内，模型不必把整段话挤进一个上下文窗口（长段最容易丢字/断句错），
-        // 顺带单句解码更快。VAD 模型缺失、切不出句子或任何一步抛异常，都退回整段解码 ——
-        // 语音可用性不能被一个可选件拖住。
+        val text = runCatching { decodePcm16(pcm16, withVad = true) }
+            .getOrElse { t ->
+                Diagnostics.w(tag, "离线解码异常 ${t.javaClass.simpleName}: ${t.message}")
+                return BatchOutcome.Fail("离线解码失败")
+            }
+        Diagnostics.i(
+            tag,
+            "离线解码完成 音频=${pcm16.size / 2 / SAMPLE_RATE.toFloat()}s " +
+                "耗时=${System.currentTimeMillis() - started}ms 字数=${text.length}",
+        )
+        return BatchOutcome.Ok(text.trim())
+    }
+
+    // ── 「边说边出」：录音期间每 0.9 秒把当前缓冲解一次，作为组合态回显 ──
+    //
+    // 为什么是这个做法（2026-11-17 用户反馈「点长语音后一句话都不出，得等结束」）：
+    // SenseVoice 是**整段批量**模型，没有流式接口，但 10 秒以内的音频解一次只要几百毫秒，
+    // 所以按「缓冲变了就再解一次」的方式模拟出流式 —— 用户看到的字落后约 1 秒，
+    // 说完一句就已经在屏上了。最终结果仍然是松手后整段解码，用 commitText 覆盖组合态。
+
+    @Volatile
+    private var partialStop = true
+    private var partialThread: Thread? = null
+
+    override fun beginTask(): String? {
+        val id = super.beginTask() ?: return null
+        startPartialLoop(id)
+        return id
+    }
+
+    override fun endTask(): Boolean {
+        stopPartialLoop()
+        return super.endTask()
+    }
+
+    override fun cancelTask(): Boolean {
+        stopPartialLoop()
+        return super.cancelTask()
+    }
+
+    private fun stopPartialLoop() {
+        partialStop = true
+        partialThread = null
+    }
+
+    private fun startPartialLoop(taskId: String) {
+        stopPartialLoop()
+        partialStop = false
+        val thread = Thread {
+            var lastBytes = 0
+            while (!partialStop) {
+                try {
+                    Thread.sleep(PARTIAL_INTERVAL_MS)
+                } catch (e: InterruptedException) {
+                    return@Thread
+                }
+                if (partialStop || !isCapturing()) return@Thread
+                val pcm = snapshotPcm16()
+                if (pcm.size < PARTIAL_MIN_BYTES) continue
+                // 缓冲没长够就不再解一次：同一段音频重复解码白烧 CPU
+                if (pcm.size - lastBytes < PARTIAL_STEP_BYTES) continue
+                lastBytes = pcm.size
+                val text = runCatching { decodePcm16(pcm, withVad = false) }.getOrNull() ?: continue
+                if (text.isBlank()) continue
+                emitPartial(taskId, text.trim(), pcm.size / 2.0 / SAMPLE_RATE)
+            }
+        }.apply {
+            name = "local-asr-partial"
+            isDaemon = true
+            priority = Thread.NORM_PRIORITY - 1
+        }
+        partialThread = thread
+        thread.start()
+    }
+
+    /** PCM16 → 文本；部分识别与最终识别共用（部分识别不跑 VAD，省一半时间） */
+    private fun decodePcm16(pcm16: ByteArray, withVad: Boolean): String {
+        val samples = pcm16ToFloat(pcm16)
+        if (samples.isEmpty()) return ""
+        val recognizer = recognizerFor(prefs.context)
         val vadPath = LocalAsrModel.vadFile(prefs.context)
-        val segmented = if (vadPath.isFile && samples.size >= MIN_VAD_SAMPLES) {
+        val segmented = if (withVad && vadPath.isFile && samples.size >= MIN_VAD_SAMPLES) {
             splitByVad(recognizer, samples, vadPath)
         } else {
             null
         }
-        val text = segmented ?: synchronized(lock) {
+        if (segmented != null) return segmented
+        return synchronized(lock) {
             val stream = recognizer.createStream()
             try {
                 stream.acceptWaveform(samples, SAMPLE_RATE)
@@ -95,15 +140,7 @@ internal class LocalSenseVoiceClient(
                 stream.release()
             }
         }
-        Diagnostics.i(
-            tag,
-            "离线解码完成 音频=${samples.size / SAMPLE_RATE.toFloat()}s " +
-                "分句=${if (segmented == null) "整段" else "VAD"} " +
-                "耗时=${System.currentTimeMillis() - started}ms 字数=${text.length}",
-        )
-        return BatchOutcome.Ok(text.trim())
     }
-
 
     /**
      * silero VAD 分句 + 逐句解码。返回拼好的整段文本；切不出句子（全是静音 / 太短）
@@ -287,8 +324,73 @@ internal class LocalSenseVoiceClient(
         /** 低于这个长度（约 4 秒）不值得走 VAD：切出来的句子和整段解码差别不大 */
         const val MIN_VAD_SAMPLES = 4 * SAMPLE_RATE
 
+        /** 部分识别的节拍与最小步长 */
+        const val PARTIAL_INTERVAL_MS = 900L
+
+        /** 少于 0.5 秒的音频不值得解 */
+        const val PARTIAL_MIN_BYTES = 8000
+
+        /** 缓冲每多 0.6 秒才再解一次 */
+        const val PARTIAL_STEP_BYTES = 16_000
+
         /** 解码串行化（recognizer / stream 都非线程安全） */
         val lock = Any()
+
+        /**
+         * 取（或懒加载）**进程级**识别器；模型文件被重新下载（lastModified 变了）就重建。
+         *
+         * 抽成函数是为了两处共用：整段识别与「冷启动预热」。
+         */
+        fun recognizerFor(context: Context): OfflineRecognizer {
+            val model = LocalAsrModel.modelFile(context)
+            val tokens = LocalAsrModel.tokensFile(context)
+            synchronized(lock) {
+                val cached = cachedRecognizer
+                if (cached != null && cachedModelPath == model.absolutePath &&
+                    cachedModelStamp == model.lastModified()
+                ) {
+                    return cached
+                }
+                cachedRecognizer?.release()
+                val config = OfflineRecognizerConfig(
+                    modelConfig = OfflineModelConfig(
+                        senseVoice = OfflineSenseVoiceModelConfig(
+                            model = model.absolutePath,
+                            // 中英混说是常态，交给模型自己判语种
+                            language = "auto",
+                            useInverseTextNormalization = true,
+                        ),
+                        tokens = tokens.absolutePath,
+                        numThreads = 2,
+                        debug = false,
+                        provider = "cpu",
+                    ),
+                )
+                return OfflineRecognizer(config = config).also {
+                    cachedRecognizer = it
+                    cachedModelPath = model.absolutePath
+                    cachedModelStamp = model.lastModified()
+                }
+            }
+        }
+
+        /**
+         * 冷启动预热：把识别器（几百 MB 的内存与算子初始化）在后台先建好。
+         *
+         * 用户反馈「第一次冷启动语音较慢」—— 原先第一次解码才建识别器，那 2~4 秒全算在
+         * 用户说完等结果的时间里；现在 IME 进程一启动就预热，第一次说话直接可用。
+         */
+        fun warmup(context: Context) {
+            if (!LocalAsrModel.isReady(context)) return
+            val started = System.currentTimeMillis()
+            runCatching { recognizerFor(context) }
+                .onSuccess {
+                    Diagnostics.i("LocalAsr", "预热完成 耗时=${System.currentTimeMillis() - started}ms")
+                }
+                .onFailure {
+                    Diagnostics.w("LocalAsr", "预热失败 ${it.javaClass.simpleName}: ${it.message}")
+                }
+        }
 
         var cachedRecognizer: OfflineRecognizer? = null
         var cachedModelPath: String = ""
