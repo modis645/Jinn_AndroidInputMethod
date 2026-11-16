@@ -147,7 +147,7 @@ class PinyinKeyTest {
         val src = TestSources.codeSource("PinyinKey.kt")
         val visualProps = listOf(
             "label", "centeredStyle", "uniformMeasureText", "uniformMeasureWidth",
-            "subLabel", "subLabelRed", "glyphSizeDeltaPx", "fullPinyinStyle",
+            "subLabel", "cornerLabel", "subLabelRed", "glyphSizeDeltaPx", "fullPinyinStyle",
         )
         for (name in visualProps) {
             val at = src.indexOf("var $name:")
@@ -192,7 +192,7 @@ class PinyinKeyTest {
         val passive = setOf(
             "keyPaint", "textPaint", "subPaint", "glyphFm", "subFm",
             "colorKey", "colorKeyPressed", "colorText", "colorCorner",
-            "faceRect", "strokePaint", "rect",
+            "faceRect", "strokePaint", "cornerTextPaint", "rect",
         )
         val nonVisual = mapOf(
             "visual" to "applySkin",
