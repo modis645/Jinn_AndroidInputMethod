@@ -4871,9 +4871,17 @@ class JinnIme : InputMethodService() {
         }
     }
 
-    /** 对齐桌面端 trash_punc：句尾的逗号句号在聊天场景里更像噪音 */
-    private fun stripTrailingPunc(text: String): String =
-        text.trimEnd().trimEnd(*TRAILING_PUNC)
+    /**
+     * 句尾整形的最后一道：只删「没说完」的尾巴（逗号 / 顿号）。
+     *
+     * 2026-11-17 用户反馈「标点加得比较少」—— 原实现连句号一起删，一段话上屏后连
+     * 句尾都没有；现在句号 / 问号 / 叹号一律保留，只有逗号类的悬空尾巴才收掉。
+     */
+    private fun stripTrailingPunc(text: String): String {
+        val end = text.trimEnd()
+        // 只在「逗号类结尾」时收尾；句号等已说完的标点原样保留
+        return if (end.isEmpty()) end else end.trimEnd(*TRAILING_PUNC)
+    }
 
     // ── 在线翻译（BYOK）────────────────────────────────────
 
@@ -6789,8 +6797,8 @@ class JinnIme : InputMethodService() {
         const val BACKSPACE_DELAY_MS = 400L
         const val BACKSPACE_REPEAT_MS = 55L
 
-        /** 对齐 config_client.py 的 trash_punc */
-        val TRAILING_PUNC = charArrayOf('，', '。', ',', '.')
+        /** 「没说完」的句尾标点：只收逗号类，句号/问号/叹号保留（见 [stripTrailingPunc]） */
+        val TRAILING_PUNC = charArrayOf('，', ',', '、')
     }
 }
 
