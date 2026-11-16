@@ -150,8 +150,7 @@ class PrefsBackupCoverageTest {
             "KEY_LOCK_SERVER" to "asBool(v)",
             "KEY_LANGUAGE" to "asString(v)",
             "KEY_PROMPT" to "asString(v)",
-            "KEY_STRIP_PUNC" to "asBool(v)",
-            "KEY_COMPOSING" to "asBool(v)",
+            // 2026-11-17：strip_punc / composing 两个键已退役，导入时按「不认识就忽略」处理
             "KEY_SHUANGPIN" to "asBool(v)",
             "KEY_SHUANGPIN_SCHEME" to "asInt(v)",
             "KEY_KB_ENGLISH" to "asBool(v)",
