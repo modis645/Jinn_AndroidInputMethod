@@ -881,10 +881,17 @@ class VoiceSettingsActivity : ComponentActivity() {
 
             ready -> {
                 val vad = if (LocalAsrModel.hasVad(this)) "分句模型已就绪" else "分句模型缺失（长句整段识别，不影响使用）"
+                // 输入法没启用时，语音键根本不会被调用 —— 这是「模型明明在、语音用不了」
+                // 最常见的真因（2026-11-16 诊断日志: enabled=false ready=false），直接写在状态行里。
+                val imeHint = if (isImeEnabledHere()) {
+                    ""
+                } else {
+                    "\n注意：输入法当前未启用（或未被选为当前输入法），语音键不会工作"
+                }
                 textLocalAsrStatus.text =
                     "模型已就绪（占用 ${used / (1024 * 1024)} MB）\n$vad\n" +
                         "存放在应用数据目录，清理缓存不会删；只有卸载或点「删除模型」才会消失\n" +
-                        storageSelfCheckLine()
+                        storageSelfCheckLine() + imeHint
                 progressLocalAsr.visibility = View.GONE
                 btnLocalAsrDownload.text = TEXT_LOCAL_ASR_DOWNLOAD
                 btnLocalAsrDelete.visibility = View.VISIBLE
@@ -907,13 +914,22 @@ class VoiceSettingsActivity : ComponentActivity() {
         }
         // 日志尾部直接摆在卡片里：用户「没反应」时截一张图，就能看出卡在哪个源、
         // 是 DNS、403、还是校验不过（比让他复制粘贴可靠）
-        val tail = if (ready) "" else LocalAsrDownloader.logTail(this)
+        // 就绪之后也要留着上一段下载日志：用户反馈「下载完日志就没了，出问题没处看」。
+        // 就绪时只留 4 行（够看出走的哪个源、解包结果），未就绪时留 12 行。
+        val tail = LocalAsrDownloader.logTail(this, if (ready) 4 else 12)
         if (tail.isEmpty()) {
             textLocalAsrLog.visibility = View.GONE
         } else {
             textLocalAsrLog.visibility = View.VISIBLE
             textLocalAsrLog.text = tail
         }
+    }
+
+    /** 输入法本机是否已启用（与设置页「启用」按钮同一判据） */
+    private fun isImeEnabledHere(): Boolean {
+        val imm = getSystemService(INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager
+            ?: return false
+        return imm.enabledInputMethodList.any { it.packageName == packageName }
     }
 
     /**
