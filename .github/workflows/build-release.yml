@@ -65,6 +65,17 @@ jobs:
           find "$RUNNER_TEMP/sherpa" -path '*arm64-v8a*' -name '*.so' -exec cp {} app/src/main/jniLibs/arm64-v8a/ \;
           ls -l app/libs app/src/main/jniLibs/arm64-v8a
 
+      - name: 编译单元测试（测试与源码脱节时立刻暴露，不再悄悄坏掉）
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew --no-daemon compileDebugUnitTestKotlin
+
+      - name: 跑单元测试（只为记录，不阻塞出包）
+        continue-on-error: true
+        run: |
+          ./gradlew --no-daemon testDebugUnitTest
+
       - name: 编译 release 包（正式签名）
         env:
           JINN_KEYSTORE_FILE: ${{ runner.temp }}/release.jks
