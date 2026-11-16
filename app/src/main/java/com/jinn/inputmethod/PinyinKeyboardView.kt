@@ -1136,11 +1136,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
     /** 连续删除的间隔 */
     private val backspaceRepeatIntervalMs = 55L
 
-    /** 双击窗口：两次短按间隔小于该值视为双击（双击后长按触发清空输入框） */
+    /** 双击窗口：两次短按间隔小于该值视为双击（双击态只用于诊断残留，清空不依赖它） */
     private val doubleTapWindowMs = 280L
-
-    /** 双击后第三次按住超过该时长触发全部清空（长按确认，杜绝误触） */
-    private val longPressClearMs = 800L
 
     /** 长按退格到点清空输入框的阈值：比连删起始（[backspaceRepeatDelayMs]）晚，但不至于让人等 */
     private val backspaceClearHoldMs = 600L
@@ -1158,12 +1155,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private var backspaceDownRawY = 0f
 
     /**
-     * 「双击 → 长按」清空手势的有效窗口：双击完成后，必须在该时长内再次按下
-     * 退格，才会挂上清空检测。
+     * 双击态的有效窗口：双击计数只用于诊断残留，超过该时长即清零。
      *
-     * 没有这个窗口时双击态会一直挂着：用户快速点两下退格（删两个字，高频操作）
-     * 之后，哪怕过了几分钟，任何一次长按退格都会在 [longPressClearMs] 后
-     * 清空整个输入框，且不可撤销。
+     * 清空已改成「长按 600ms 直接清空」（见 [backspaceClearHoldMs]），不再依赖双击，
+     * 所以这里不再承担任何防误触职责，只保证诊断日志里的计数不过期。
      */
     private val clearGestureWindowMs = 500L
 
@@ -3224,9 +3219,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 删除键触摸：
      *  - 按下即删一个字符；按住超过 [backspaceRepeatDelayMs] 进入连续删除，松开停止
      *  - 按住期间滑出键面即停（[MotionEvent.ACTION_MOVE]，L-1438）
-     *  - 「双击 + 长按」触发 [onTripleBackspace] 全部清空：
-     *    连续两次短按（间隔 < [doubleTapWindowMs]）后，第三次按住超过 [longPressClearMs]。
-     *    正常快速删除（点 3 下）第三次是短按即松，不会误触。
+     *  - 按住超过 [backspaceClearHoldMs] 触发 [onTripleBackspace] 全部清空（沙鸥同款）；
+     *    清空后继续按住并**下滑**可恢复（[restoreSlopPx]）。
      */
     private fun handleBackspaceTouch(event: MotionEvent): Boolean {
         when (event.actionMasked) {
@@ -3356,22 +3350,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         backspaceClearDone = true
     }
 
-    /** 双击后长按达到阈值：全部清空 */
-    private val clearOnLongPressRunnable = Runnable {
-        if (!backspaceHeld) return@Runnable
-        backspaceTapCount = 0
-        // 内容已全部清空：停掉仍在跑的连续删除。否则会以 55ms 间隔继续发 DEL，
-        // 在部分宿主（如 WebView）里可能被解释成「返回」等其它动作。
-        backspaceHandler.removeCallbacks(backspaceRepeatRunnable)
-        // 清空是不可撤销的一次性动作，且与「按下那一声」间隔极短：走普通节流会被**按下那声**挡掉，
-        // 而这正是最需要给出「已经清干净了」提示的时刻，故强制发一次
-        KeyFeedback.fire(TapSound.G_ERASE, force = true)
-        Diagnostics.i(TAG, "退格双击+长按：清空全部")
-        onTripleBackspace()
-    }
-
     /**
-     * 双击+长按清空：先清拼音串与预测，再通知 IME 删除已上屏文本。
+     * 长按退格清空：先清拼音串与预测，再通知 IME 删除已上屏文本。
      *
      * 搜索模式下只清搜索框：该手势清的是「输入框」，而此刻用户的输入意图在搜索框上；
      * 落到 [Listener.onDeleteAll] 会把宿主（正在编辑的聊天 / 文档）内容整个删掉。
