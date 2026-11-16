@@ -2933,9 +2933,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
         view.layoutParams = lp
     }
 
-    /** 供 IME 调试/测试：获取某字母键的视图 */
-    fun keyView(c: Char): PinyinKey? = keyViews[c]
-
     /** 供 IME 调试：返回功能键屏幕坐标 */
     fun getFunctionKeyPositions(): String {
         val sb = StringBuilder()
