@@ -193,6 +193,27 @@ internal object LocalAsrDownloader {
         return c
     }
 
+    /** 正在单独补下 VAD（避免与主下载同时改 `connection`） */
+    @Volatile
+    private var vadRunning = false
+
+    /**
+     * 模型已就绪但缺分句模型时，单独补下一次（640 KB，失败只记日志，不影响可用性）。
+     *
+     * 为什么需要（2026-11-16 真机日志）：主下载 ok=true 之后 `vad 缺失` —— 分句模型那一步
+     * 静默失败，用户就一直停在「长句整段解码」，而界面上看不出来。补一次成本只有 640KB。
+     */
+    fun ensureVad(context: Context) {
+        if (isRunning() || vadRunning) return
+        if (!LocalAsrModel.isReady(context) || LocalAsrModel.hasVad(context)) return
+        vadRunning = true
+        Thread {
+            val ok = runCatching { downloadVad(context) {} }.getOrDefault(false)
+            vadRunning = false
+            Diagnostics.i("LocalAsr", "补下分句模型 ok=$ok ${LocalAsrModel.audit(context).line()}")
+        }.apply { name = "local-asr-vad" }.start()
+    }
+
     /**
      * 可选件：silero VAD 模型（约 640 KB 直链）。失败一律吞掉 ——
      * 本体已就位时语音照常可用，只是长句回到整段解码的老路径。
