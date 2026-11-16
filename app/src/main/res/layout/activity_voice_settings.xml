@@ -112,8 +112,8 @@
                     android:layout_height="wrap_content" />
 
                 <ProgressBar
-                    android:id="@+id/progress_local_asr"
                     style="?android:attr/progressBarStyleHorizontal"
+                    android:id="@+id/progress_local_asr"
                     android:layout_width="match_parent"
                     android:layout_height="6dp"
                     android:layout_marginTop="6dp"
@@ -123,21 +123,19 @@
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
+                    android:layout_marginTop="6dp"
                     android:orientation="horizontal">
 
                     <Button
                         style="@style/SettingsButton"
                         android:id="@+id/btn_local_asr_download"
                         android:layout_width="0dp"
-                        android:layout_height="44dp"
                         android:layout_weight="1" />
 
                     <Button
                         style="@style/SettingsButton"
                         android:id="@+id/btn_local_asr_delete"
                         android:layout_width="0dp"
-                        android:layout_height="44dp"
                         android:layout_marginStart="8dp"
                         android:layout_weight="1" />
                 </LinearLayout>
@@ -148,8 +146,7 @@
                     style="@style/SettingsButton"
                     android:id="@+id/btn_local_asr_import"
                     android:layout_width="match_parent"
-                    android:layout_height="44dp"
-                    android:layout_marginTop="8dp" />
+                    android:layout_marginTop="6dp" />
 
                 <!-- 下载日志尾部直接显示（2026-11-15）：出问题时用户只要截一张图就能定位，
                      不再需要复制粘贴。只在有日志时出现。 -->
@@ -157,7 +154,7 @@
                     android:id="@+id/text_local_asr_log"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
+                    android:layout_marginTop="6dp"
                     android:background="#12000000"
                     android:fontFamily="monospace"
                     android:padding="8dp"
