@@ -750,6 +750,9 @@ class JinnIme : InputMethodService() {
                 if (LocalAsrModel.isReady(applicationContext)) {
                     // 已就绪但缺分句模型（640KB 可选件）：顺手补一次，失败只记日志
                     LocalAsrDownloader.ensureVad(applicationContext)
+                    // 冷启动预热：识别器（几百 MB 内存 + 算子初始化）先建好，
+                    // 否则第一次说完才建，那 2~4 秒全算在用户等结果的时间里
+                    LocalSenseVoiceClient.warmup(applicationContext)
                     return@runCatching
                 }
                 if (LocalAsrDownloader.isRunning()) return@runCatching
@@ -777,13 +780,10 @@ class JinnIme : InputMethodService() {
         DynamicSymbols.screenSize = screenSizeProvider()
         cancelSlidePx = CANCEL_SLIDE_DP * resources.displayMetrics.density
         // 按设置页配置的默认模式初始化键盘（语音 / 26键中文 / 26键英文）
-        keyboardMode = when {
-            // 语音关闭时一律进拼音键盘，绝不进语音面板
-            !prefs.voiceInputEnabled -> KeyboardMode.PINYIN
-            prefs.defaultKeyboardMode == DefaultKeyboardMode.PINYIN_CN ||
-                prefs.defaultKeyboardMode == DefaultKeyboardMode.PINYIN_EN -> KeyboardMode.PINYIN
-            else -> KeyboardMode.VOICE
-        }
+        // 2026-11-17 用户反馈「长按空格先弹出一个带麦克风的页面，还得再按一次麦克风才能说话」：
+        // 语音的入口已经收敛成「长按空格 / 点长语音键」两条，弹键盘不再落到语音键盘页 ——
+        // 那个页面只会让用户多按一次、还看不出键盘去哪了。默认模式一律 26 键。
+        keyboardMode = KeyboardMode.PINYIN
         Diagnostics.i(TAG, "onCreate: IME 服务创建（默认模式=$keyboardMode）")
         maybeRunClipboardImageGc()
 
@@ -2312,14 +2312,8 @@ class JinnIme : InputMethodService() {
         pinyinView = pinyin
         // 键盘视图每次创建都重新套用默认模式（InputMethodService 可能复用实例，
         // 仅靠 onCreate 设置 keyboardMode 在复用场景下不生效）
-        keyboardMode = when {
-            // 语音视图未创建（语音关闭 / 默认拼音模式）：只有拼音一棵树，模式不可能落语音
-            voice == null -> KeyboardMode.PINYIN
-            !prefs.voiceInputEnabled -> KeyboardMode.PINYIN
-            prefs.defaultKeyboardMode == DefaultKeyboardMode.PINYIN_CN ||
-                prefs.defaultKeyboardMode == DefaultKeyboardMode.PINYIN_EN -> KeyboardMode.PINYIN
-            else -> KeyboardMode.VOICE
-        }
+        // 同上：弹键盘一律 26 键，语音键盘页不再作为默认界面
+        keyboardMode = KeyboardMode.PINYIN
         applyKeyboardMode()
         // 不在这里恢复剪贴板面板（见 onStartInputView 注释，恢复会诱发
         // IME 窗口反复 relayout 循环，反而导致面板抖动/空白）。
@@ -4678,7 +4672,8 @@ class JinnIme : InputMethodService() {
             voiceResultPackage = null
             ui.removeCallbacks(recognizeTimeout)
             Diagnostics.i(TAG, "stopRecording: 取消（不采用结果）")
-            // 预编辑已固定关闭：取消时不必再撤组合态
+            // 取消要把「边说边出」写下的组合态撤掉，否则输入框里留一段半截字
+            clearVoiceComposing()
             setHint(getString(R.string.hint_cancelled))
         }
     }
@@ -4778,6 +4773,31 @@ class JinnIme : InputMethodService() {
 
     // ── 识别结果 ──────────────────────────────────────────────
 
+    /** 「边说边出」的组合态是否已经写过（取消 / 丢弃时要撤掉，否则宿主里留一段半截字） */
+    private var voiceComposingShown = false
+
+    /**
+     * 把中途识别文本放进**组合态**：宿主里立刻看得见字，但不算上屏。
+     *
+     * 为什么用组合态而不是 commitText：中途文本是「整段还没说完」的版本，每 0.9 秒会被新版本覆盖；
+     * 用 commitText 就等于把半截话写进输入框，后面无法收回，还会和最终结果重复。
+     * 组合态在 Android 里的语义就是「这段字还会变」，最终结果 commitText 会整段替换同一个组合区。
+     */
+    private fun showVoiceComposing(text: String) {
+        val connection = currentInputConnection ?: return
+        if (text.isBlank()) return
+        if (!runCatching { connection.setComposingText(text, 1) }.isSuccess) return
+        voiceComposingShown = true
+    }
+
+    /** 撤掉组合态（取消 / 结果作废 / 换输入框时）：不让半截字留在输入框里 */
+    private fun clearVoiceComposing() {
+        if (!voiceComposingShown) return
+        voiceComposingShown = false
+        runCatching { currentInputConnection?.setComposingText("", 1) }
+        runCatching { currentInputConnection?.finishComposingText() }
+    }
+
     private fun handleResult(message: RecognitionMessage) {
         // 归属校验：松手后服务端还要 1~3 秒才回结果，期间用户可能已切到别的应用。
         // 跨应用落字属隐私问题（用户没打算往那个输入框写字），与暂存粘贴同一条口径。
@@ -4804,7 +4824,9 @@ class JinnIme : InputMethodService() {
         val text = stripTrailingPunc(message.text)
 
         if (!message.isFinal) {
-            // 预编辑回显已固定关闭（开关与界面 2026-11-17 删除）：非最终结果只更新状态条
+            // 边说边出（2026-11-17 用户要求「至少说完一句可以出一句」）：
+            // 中途结果写进组合态，屏上随说随出；最终结果 commitText 会整段覆盖它，不会重复。
+            showVoiceComposing(text)
             if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "handleResult: 中途结果 ${message.duration.toInt()}s \"${text.take(40)}\"")
             setHint(getString(R.string.hint_progress, message.duration.toInt()))
             return
@@ -4814,6 +4836,8 @@ class JinnIme : InputMethodService() {
         awaitingResult = false
         voiceResultPackage = null
         ui.removeCallbacks(recognizeTimeout)
+        // 最终结果要整段覆盖组合态：commitText 会替换组合区，先按「已写过」复位即可
+        voiceComposingShown = false
         // 只记字数不记正文：日志文件落在外部存储，且会随「导出诊断包」整体外发
         Diagnostics.i(TAG, "handleResult: 最终结果 共${message.text.length}字")
         connection.commitText(text, 1)
