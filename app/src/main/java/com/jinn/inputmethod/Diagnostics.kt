@@ -1109,9 +1109,6 @@ private const val LOG_SEGMENTS_KEPT = 2
             ?.filter { it.isFile && it.name.startsWith("jinn-diagnostics-") && !it.name.endsWith(".tmp") }
             ?.maxByOrNull { it.lastModified() }
 
-    /** 今天的日志文件（可能尚未创建） */
-    fun todayLogFile(): File? = logDir?.let { File(it, "$LOG_FILE_PREFIX${today()}.log") }
-
     /**
      * 日志目录的读写互斥锁：**快照、导出包与旧日志清理**共用这一把（BUG.md L-174）。
      *
