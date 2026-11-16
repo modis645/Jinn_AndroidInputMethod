@@ -175,7 +175,6 @@ class VoiceSettingsPageTest {
             "switch_voice_input", "card_mic_permission", "card_voice_server", "text_mic_state", "btn_grant",
             "edit_host", "edit_port", "check_lock_server",
             "spinner_language", "spinner_default_mode",
-            "edit_prompt", "check_strip", "check_composing",
             "btn_voice_save", "text_voice_save_hint", "container_providers",
             // 2026-11-01：识别后端选择 + 讯飞三件凭据
             "card_voice_backend", "spinner_voice_backend",
@@ -245,9 +244,9 @@ class VoiceSettingsPageTest {
             "card_voice_providers.visibility" in code,
         )
         // 四个即时写盘项（三勾选 + 默认键盘样式）必须真的在写 Prefs：文案说的是「即时生效」
+        // 2026-11-17 起「去掉句尾标点」「预编辑实时回显」两个开关已连同界面一起删除，
+        // 行为固定下来（见 JinnIme.handleResult），这里只剩「锁服务端」与「默认键盘样式」两项。
         for (write in listOf(
-            "prefs.stripTrailingPunc = checked",
-            "prefs.useComposing = checked",
             "prefs.lockServer = checked",
             "prefs.defaultKeyboardMode = mode",
         )) {
