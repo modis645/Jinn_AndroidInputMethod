@@ -762,6 +762,9 @@ object PinyinEngine {
             if (tier2CharsText != null) setTier2CharsText(tier2CharsText)
             if (tier3CharsText != null) setTier3CharsText(tier3CharsText)
             setRareTiers(rareTier2, rareTier3)
+            // 简拼首字母索引是从词库派生的：词库一换就必须重建，否则新注入/新加载的短语
+            // 永远打不出首字母（旧索引里没有它们的键）
+            initialsIndex = null
             loadCharsText(chars)
             baseIndex = PhraseIndex.of(indexBytes) ?: throw AssertionError("测试索引结构异常")
             loadSyllablesText(syllables)
@@ -809,6 +812,9 @@ object PinyinEngine {
             if (tier2CharsText != null) setTier2CharsText(tier2CharsText)
             if (tier3CharsText != null) setTier3CharsText(tier3CharsText)
             setRareTiers(rareTier2, rareTier3)
+            // 简拼首字母索引是从词库派生的：词库一换就必须重建，否则新注入/新加载的短语
+            // 永远打不出首字母（旧索引里没有它们的键）
+            initialsIndex = null
             loadCharsText(chars)
             loadPhrasesText(phrases)
             loadSyllablesText(syllables)
@@ -2510,6 +2516,16 @@ object PinyinEngine {
      * 建索引是纯内存计算，但规模是「全部词库键 × 音节切分」，几百毫秒到几秒级；
      * 放到后台线程后，用户的第一个键不会等它。
      */
+    /**
+     * 测试用：同步建好首字母索引。
+     *
+     * 线上是 [preloadInitialsIndex] 在后台线程建，按键路径上不等它；单测里没有那个时机，
+     * 需要打简拼的用例在 setUp 里显式调用一次，才能覆盖「内置词简拼」这条真实路径。
+     */
+    internal fun buildInitialsIndexForTest() {
+        ensureInitialsIndex()
+    }
+
     fun preloadInitialsIndex() {
         if (initialsIndex != null) return
         Thread {
