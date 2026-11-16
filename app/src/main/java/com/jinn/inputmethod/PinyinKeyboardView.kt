@@ -1366,7 +1366,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             bar.layoutParams = lp
             bar.visibility = View.GONE
             bar.elevation = dpFloat(6f)
-            root.addView(bar)
+            (root as? FrameLayout)?.addView(bar)
         }
         keySemicolon = root.findViewById(R.id.key_semicolon)
         keySemicolon.label = SEMICOLON_KEY.toString()
