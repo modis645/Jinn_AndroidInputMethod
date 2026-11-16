@@ -801,6 +801,21 @@ class VoiceSettingsActivity : ComponentActivity() {
             Diagnostics.i(TAG, "离线语音：本次会话已取消过下载，不再自动开始")
             return
         }
+        // 先自愈再谈重下：常见残局是「模型件已经躺在缓存解包目录 / 旧内部目录，
+        // 或只差最后一次改名」，修一下就好，不必再拉 163MB。自愈会搬大文件，放后台线程。
+        if (LocalAsrModel.canRepair(this)) {
+            Diagnostics.i(TAG, "离线语音：发现可自愈的模型残留，先修复")
+            textLocalAsrStatus.text = "正在修复模型残留…"
+            Thread {
+                val fixed = LocalAsrModel.repair(applicationContext)
+                runOnUiThread {
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    refreshLocalAsrStatus()
+                    if (!fixed) startLocalAsrDownload()
+                }
+            }.start()
+            return
+        }
         // 每次进页面都试一次（用户 2026-11-16：「第一次进去显示取消下载、实际没下载，
         // 得退出再进来才可以下载」—— 一次性标志让第一次的失败再也救不回来）
         Diagnostics.i(TAG, "离线语音：模型缺失，自动开始下载")
@@ -877,12 +892,14 @@ class VoiceSettingsActivity : ComponentActivity() {
 
             else -> {
                 val fail = LocalAsrDownloader.lastFailure
+                // 状态行末尾附上体检事实：真机上出现过「系统存储说有 240MB、这一行说未下载」，
+                // 只有把「哪个文件多大 / 缺哪个」写出来，用户截图一眼就能定位，不用再来回试。
                 textLocalAsrStatus.text =
-                    if (fail.isNullOrBlank()) {
+                    (if (fail.isNullOrBlank()) {
                         "模型未下载（当前占用 ${used / (1024 * 1024)} MB）"
                     } else {
                         "模型未下载（当前占用 ${used / (1024 * 1024)} MB）\n上次失败：$fail"
-                    }
+                    }) + "\n" + LocalAsrModel.audit(this).line()
                 progressLocalAsr.visibility = View.GONE
                 btnLocalAsrDownload.text = TEXT_LOCAL_ASR_DOWNLOAD
                 btnLocalAsrDelete.visibility = View.GONE
