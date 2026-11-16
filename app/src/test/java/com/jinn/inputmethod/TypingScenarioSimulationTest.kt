@@ -129,10 +129,12 @@ class TypingScenarioSimulationTest {
     }
 
     @Test
-    fun `已收录的词_删掉一个字母后仍能搜到`() {
+    fun `已收录的词_音节数对上才命中`() {
         pickLikeUser("刘志武", "liuzhiwu")
         repeat(2) { pickLikeUser("刘志武", "liuzhiwu") }
-        assertTrue("lz 应已能命中", PinyinEngine.query("lz").candidates.contains("刘志武"))
+        assertTrue("音节数对齐的简拼 lzw 必须命中", PinyinEngine.query("lzw").candidates.contains("刘志武"))
+        // 简拼严格按音节数对齐：lz 只有 2 段对 3 个音节，不该硬凑出 3 字词
+        assertFalse("lz 段数不够，不该凑出三字词", PinyinEngine.query("lz").candidates.contains("刘志武"))
     }
 
     @Test
