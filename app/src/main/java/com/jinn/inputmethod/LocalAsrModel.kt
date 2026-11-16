@@ -135,6 +135,49 @@ internal object LocalAsrModel {
         }
     }
 
+    /** 随包附带的小件（不参与 163MB 下载）：词表 315KB、分句模型 644KB */
+    const val ASSET_DIR = "local-asr"
+    const val ASSET_TOKENS = "local-asr/tokens.txt"
+    const val ASSET_VAD = "local-asr/silero_vad.onnx"
+    const val BUNDLED_TOKENS_MIN_BYTES = 200_000L
+
+    /** assets 路径 → 落地点文件名（两件都必须随包走） */
+    val BUNDLED_PARTS = listOf(ASSET_TOKENS to TOKENS_FILE, ASSET_VAD to VAD_FILE)
+
+    /**
+     * 把随包的两个小件释放到模型目录（缺件或过小才写，已有不动）。
+     *
+     * 为什么随包：词表与分句模型加起来不到 1MB，却是「就绪」判定里最容易缺的两件 ——
+     * 少了它们要么识别器加载不起来，要么分句与句间标点全没了。塞进 APK 后这两条
+     * 失败路径直接从下载链路里消失，只剩一个 239MB 的本件需要下。
+     * 代价只是 APK 大 1MB 左右（onnx 压缩率不高）。
+     */
+    fun ensureBundled(context: Context) {
+        val d = dir(context)
+        copyAssetIfMissing(context, ASSET_TOKENS, File(d, TOKENS_FILE), BUNDLED_TOKENS_MIN_BYTES)
+        copyAssetIfMissing(context, ASSET_VAD, File(d, VAD_FILE), VAD_MIN_BYTES)
+    }
+
+    /** 先写 .part 再改名：中途被杀不会留下半个词表 / 半个 VAD */
+    private fun copyAssetIfMissing(context: Context, asset: String, dst: File, minBytes: Long) {
+        if (dst.isFile && dst.length() >= minBytes) return
+        runCatching {
+            val tmp = File(dst.parentFile, dst.name + ".part")
+            context.assets.open(asset).use { input ->
+                tmp.outputStream().use { out -> input.copyTo(out, 1 shl 20) }
+            }
+            if (tmp.length() < minBytes) {
+                tmp.delete()
+                return
+            }
+            dst.delete()
+            if (!tmp.renameTo(dst)) tmp.delete()
+            runCatching { Diagnostics.i("LocalAsr", "随包小件已释放：${dst.name} ${dst.length()}B") }
+        }.onFailure {
+            runCatching { Diagnostics.w("LocalAsr", "释放随包小件失败 $asset: ${it.javaClass.simpleName}") }
+        }
+    }
+
     /**
      * 模型目录体检：目录里到底有什么，每个必备件各多少字节。
      *
