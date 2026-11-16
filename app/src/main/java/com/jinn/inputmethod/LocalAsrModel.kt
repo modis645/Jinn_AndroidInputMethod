@@ -241,7 +241,9 @@ internal object LocalAsrModel {
     /** [repair] 的实际实现（纯文件操作，可对临时目录跑）：返回自愈后是否就绪 */
     fun repairIn(d: File, unpack: File): Boolean {
         if (!d.isDirectory) d.mkdirs()
-        if (auditDir(d).ready) return true
+        // 注意：**不**因「模型已就绪」直接返回。模型齐了但 vad 缺失同样是残局 ——
+        // 少了 VAD 就退回整段解码，分句与句间标点全没了（用户看到的正是「标点变少」）。
+        // 下面每一步都只补缺件，已有且够大的文件一律不覆盖。
         var changed = false
 
         // ① 就地修 .part（同分区改名，毫秒级）
