@@ -39,25 +39,19 @@ class VoiceSelfTestTest {
     }
 
     @Test
-    fun `前置校验点名缺什么且地址非法时直接拦下`() {
-        // 自建后端：地址合法就放行（不联网探测），非法就地拒绝
-        assertNull(VoiceTestPreflight.check(VoiceBackend.CAPS, "", "", "", "192.168.1.3"))
-        assertNull(VoiceTestPreflight.check(VoiceBackend.CAPS, "", "", "", "[::1]"))
-        assertEquals(
-            VoiceTestPreflight.TEXT_BAD_HOST,
-            VoiceTestPreflight.check(VoiceBackend.CAPS, "", "", "", "http://192.168.1.3"),
-        )
-
-        // 讯飞：缺哪件说哪件（字段名而已，不含凭据原文）
-        assertNull(VoiceTestPreflight.check(VoiceBackend.XF, "app", "key", "secret", "192.168.1.3"))
-        assertEquals(
-            "讯飞凭据不全，缺少 APPID / APIKey / APISecret",
-            VoiceTestPreflight.check(VoiceBackend.XF, "", "", "", "192.168.1.3"),
-        )
-        assertEquals(
-            "讯飞凭据不全，缺少 APISecret",
-            VoiceTestPreflight.check(VoiceBackend.XF, "app", "key", "", "192.168.1.3"),
-        )
+    fun `前置校验只放行离线引擎`() {
+        // 2026-11-16：在线语音六家已下线，只剩离线（sense-voice）一条链路 ——
+        // 前置校验因此退化成「是不是离线后端」，其余一律点名拒绝，不再校验地址/凭据。
+        assertNull(VoiceTestPreflight.check(VoiceBackend.LOCAL))
+        for (backend in listOf("xf", "tencent", "azure", "baidu", "deepgram", "oai", "ali")) {
+            assertEquals(
+                "在线后端 $backend 应被拦下并说明只内置离线语音",
+                VoiceTestPreflight.TEXT_ONLY_LOCAL,
+                VoiceTestPreflight.check(backend),
+            )
+        }
+        // 空串（旧配置里遗留的空值）同样按「非离线」拒绝，不能静默放行
+        assertEquals(VoiceTestPreflight.TEXT_ONLY_LOCAL, VoiceTestPreflight.check(""))
     }
 
     @Test
