@@ -564,9 +564,9 @@ class JinnIme : InputMethodService() {
         Thread {
             runCatching {
                 // ④ 2026-11-17：模型曾被手机「清除缓存」当可回收文件删掉（用户实测清缓存后
-                // 用户数据 248MB→7MB）。先把它迁到外部专属目录（Android/data/<pkg>/files），
-                // 再扫一次下载残留 —— 迁移失败会自动退回原目录，不影响可用性。
-                LocalAsrModel.migrateIfNeeded(applicationContext)
+                // 用户数据 248MB→7MB）。落点固定为外部专属目录（Android/data/<pkg>/files），
+                // 旧版私有目录里的残留在这里清掉，再扫一次下载残留 —— 不做任何搬迁。
+                LocalAsrModel.cleanLegacy(applicationContext)
                 LocalAsrDownloader.sweepCache(applicationContext)
                 // 自愈（2026-11-16）：残局里模型件常已经躺在别处（缓存解包目录 / 旧内部目录，
                 // 或只差最后一次改名）。先修，修好了就不用再拉 163MB；修不动才走下载。
@@ -862,7 +862,7 @@ class JinnIme : InputMethodService() {
      *
      * `setSelection` 是**同步 Binder 调用**：连接在请求期间失效（宿主进程死亡、编辑器重建）会抛
      * DeadObjectException，未捕获时会从提交路径一路冒到主线程把 IME 进程带走（2026-10-01 复审 L-238）。
-     * 失败与「宿主没接受」同路处理 —— 调用方（[moveCursorByOffset]）本来就要复核结果。
+     * 失败与「宿主没接受」同路处理 —— 调用方本来就要复核结果。
      */
     private fun applySelection(
         connection: android.view.inputmethod.InputConnection,
@@ -1079,49 +1079,6 @@ class JinnIme : InputMethodService() {
         return SelectionRange(start, end, text.length, text, startOffset)
     }
 
-    /**
-     * [canAppendTranslation] 的结论。
-     *
-     * 不能只回 Boolean（2026-10-01 修复 L-284）：「有选区」与「宿主答不出有没有选区」是两种要给
-     * **不同提示**的拒绝 —— 前者用户取消选中就好，后者他做什么都没用。合并成一句「请先取消选中的
-     * 内容再翻译」，等于把后者的锅扣在前者头上。
-     */
-    /**
-     * 「选区已经读过」的标记（2026-10-01 修复 L-325）。
-     *
-     * 光用 `SelectionRange?` 表达不了「读过、结论是无法确定」—— 传 null 会被 `?:` 当成「没读过」而重读
-     * 一次，而 `currentSelectionRange` 恒返回 null 的宿主（WebView 类）**每次**都是这个结果，
-     * 正是 L-315 最想省下读取的那一类。包一层就能把两种含义分开。
-     */
-    private class SelectionProbe(val range: SelectionRange?)
-
-    private enum class AppendCheck { OK, SELECTION_PRESENT, HOST_UNREADABLE }
-
-
-    /**
-     * 读当前选中的文本。
-     *
-     * 三态：**null** = 宿主读不到（调用方按「读不到」处理）；**空串** = 确实没有选中内容；
-     * **非空** = 选中的那一段。
-     *
-     * 精确选区可用时直接从窗口文本里切 —— `getSelectedText` 在部分宿主上只对 URI / 富文本有实现，
-     * 拿它当唯一来源会对普通文本框漏判；两者都取不到才返回 null。
-     */
-    private fun readSelectedText(
-        connection: android.view.inputmethod.InputConnection,
-        known: SelectionProbe? = null,
-    ): String? {
-        val range = if (known != null) known.range else currentSelectionRange(connection)
-        if (range != null) {
-            if (range.start >= range.end) return ""
-            val s = TextSelection.toWindowOffset(range.start, range.startOffset, range.text.length)
-                ?: return null
-            val e = TextSelection.toWindowOffset(range.end, range.startOffset, range.text.length)
-                ?: return null
-            return range.text.substring(s, e.coerceIn(s, range.text.length))
-        }
-        return runCatching { connection.getSelectedText(0)?.toString() ?: "" }.getOrNull()
-    }
 
     /**
      * 搜索态的「作用于宿主」面板动作一律拒绝（纵深防御）。
@@ -4597,177 +4554,6 @@ class JinnIme : InputMethodService() {
     private fun stripTrailingPunc(text: String): String =
         text.trimEnd().trimEnd(*TRAILING_PUNC)
 
-    private fun moveCursorByOffset(
-        connection: android.view.inputmethod.InputConnection,
-        offset: Int,
-    ): Boolean {
-        val range = currentSelectionRange(connection) ?: return false
-        if (range.start != range.end) return false
-        val to = range.end + offset
-        // 下界校验：反向移动（回滚光标，见 ⑤.b）可能算出负下标 —— 负下标传给 setSelection
-        // 属未定义行为（宿主可能抛异常或把光标丢到文首），直接拒绝（2026-10-02 审查）。
-        if (to < 0) {
-            Diagnostics.w(TAG, "翻译: 目标下标为负（$to），放弃移动")
-            return false
-        }
-        if (to > range.startOffset + range.textLength) {
-            Diagnostics.w(
-                TAG,
-                "翻译: 追加位置越出宿主文本窗口（$to > ${range.startOffset + range.textLength}）",
-            )
-            return false
-        }
-        applySelection(connection, to, to)
-        val now = currentSelectionRange(connection)
-        val moved = now != null && now.start == to && now.end == to
-        if (!moved) Diagnostics.w(TAG, "翻译: 宿主未接受光标移动（目标 $to）")
-        return moved
-    }
-
-    /**
-     * 取「插入点前面那一个字符」，供 `TranslationText.appendText` 决定要不要补前导换行。
-     *
-     * 三态语义（2026-10-02 修复 L-481）：
-     *  - **空串** = 光标确实在文首 ⇒ 返回 null（不补换行）✓
-     *  - **抛异常 / 宿主返回 null** = *读不到*，与「文首」不是一回事 ⇒ 返回 `'\n'`（按「需要补换行」处理）。
-     *    原先两者都塌缩成 null，于是读失败时译文直接**黏在原文行末**；而本函数的 KDoc 却写着
-     *    「按需补处理」—— 文档与实现相反，属同一类静默失效。
-     */
-    private fun charBeforeCursor(connection: android.view.inputmethod.InputConnection): Char? {
-        val s = runCatching { connection.getTextBeforeCursor(1, 0) }.getOrNull()
-        // 三态，占位符必须**既不是 null 也不是 '\n'**（2026-10-02 修复 L-481，同日纠正）：
-        //  - 空串（真文首）⇒ null ⇒ 不补前导换行；
-        //  - 读不到（抛异常 / 宿主返回 null）⇒ 替换字符占位 ⇒ 让 `appendText` 走「补前导换行」。
-        // ⚠ 上一版把读不到映射成 '\n'，而 `appendText` 里 `prev == null || prev == '\n'` 是**同一个
-        // 分支** ⇒ 那次改动等价于没改（译文照样黏在原文行末），注释与守卫却都写成了「按需补换行」。
-        // 无法区分时就按「前面有内容」处理：宁可在行间多一个换行，也不要把译文接在句尾。
-        return if (s == null) '\uFFFD' else s.lastOrNull()
-    }
-
-    /**
-     * 只读地取「光标前」的文本（**不复制、不写系统剪贴板**）。
-     *
-     * 主路径是 `getTextBeforeCursor`（IME 框架的只读查询，不改内容、不触发宿主回调）；
-     * 宿主不支持时（返回 null）兜底 `getExtractedText` + 窗口下标换算，
-     * 与 [currentSelectionRange] 同一套坐标口径。
-     *
-     * 返回 **null 表示读取失败**（宿主不支持 / 连接失效 / 事务过大），与「光标前确实没有内容」
-     * （空串，光标在文首）严格区分 —— 把前者报成后者会把「宿主读不到」说成「你没写字」
-     * （2026-10-01 修复 L-240）。
-     */
-    /**
-     * 光标前的文本，外加「它是不是从文首开始的」。
-     *
-     * 后者**不能**由长度反推（2026-10-01 修复 L-286）：兜底路径返回的是「窗口起点 → 光标」，
-     * 长度天然小于窗口长度，窗口起点非零时它照样不是从文首开始的。
-     */
-    private class BeforeText(val text: String, val fromDocStart: Boolean)
-
-    /**
-     * 取证：光标前的窗口是不是**从文档起点**开始的（2026-10-03 修复 L-565）。
-     *
-     * `getTextBeforeCursor` 返回长度小于请求长度**有两种**可能：确实到文首，或宿主自己少给
-     * （框架允许宿主按窗口 / 缓存上限截断）。前者可直接采信，后者会把「上传的是什么」与
-     * 「要不要拦」一起判错 —— 调用方会以为整篇都取到了，实际拿到的是残缺内容。
-     *
-     * 所以只在**取不满**时才付这一次 `getExtractedText`（守约宿主的回包受 `hintMaxChars` 限制）；
-     * 取证不可用（宿主不支持）时按**不可确认**处理 ⇒ 返回 `false`，让上层对「从文首 / 整篇」两档
-     * 拒绝 —— 与 after 侧「读不到一律放弃」的保守方向一致。
-     */
-    private fun beforeStartsAtDocStart(
-        connection: android.view.inputmethod.InputConnection,
-        limit: Int,
-    ): Boolean = runCatching {
-        val request = android.view.inputmethod.ExtractedTextRequest().apply { hintMaxChars = limit }
-        val extracted = connection.getExtractedText(request, 0) ?: return@runCatching false
-        extracted.startOffset == 0
-    }.getOrDefault(false)
-
-    private fun readTextBeforeCursor(
-        connection: android.view.inputmethod.InputConnection,
-        limit: Int,
-        /**
-         * 取不满 `limit` 时是否**再取一次证**（判断是否从文首开始）。
-         *
-         * 取证本身是必要的（L-565：框架允许宿主少给），但**只有 BEFORE_ALL / ALL 两档会用它拒绝**
-         * （2026-10-03 修复 L-629）⇒ 其余档位传 false 省一次整窗口 Binder 往返。
-         * 默认 true = 保持既有行为，调用方不必逐个改。
-         */
-        probeDocStart: Boolean = true,
-    ): BeforeText? {
-        // 整段包 runCatching（2026-09-30 审查）：两个 API 都是**同步 Binder 调用**，宿主可能抛
-        // TransactionTooLargeException（窗口太大）/ DeadObjectException（宿主进程已死）/ SecurityException；
-        // 未捕获时异常落在主线程消息里 ⇒ IME 进程直接崩（键盘消失、用户输入丢失）。
-        // 读不到就返回 null，让上层按「读不到」处理 —— 与「写」侧 commitText 同口径。
-        return runCatching {
-            // `getTextBeforeCursor` 返回「紧邻光标的至多 limit 个字符」：**取满**了 ⇒ 上面还有（明确不是文首）。
-            // ⚠ 但「取不满」**不能**直接当成「到文首」（2026-10-03 修复 L-565）：框架允许宿主按自身窗口 /
-            // 缓存上限**少给**（长度既不为 0 也不等于请求量，而文中仍有上文）。而这个 fromDocStart 在同一次
-            // 点击里同时决定**取什么**与**要不要拦** —— 判错会让「取不到文首」那道拒绝闸静默失效。
-            // 所以取不满时**再取一次证**（见 beforeStartsAtDocStart），只在证据支持时才认「从文首开始」。
-            connection.getTextBeforeCursor(limit, 0)?.let {
-                val s = it.toString()
-                if (s.length >= limit) return@runCatching BeforeText(s, false)
-                // `probeDocStart = false` 时不做取证（调用方按档位决定，见形参 KDoc）：
-                // 此时 fromDocStart 一律报 false = 保守（宁可让上层认为「可能还有上文」）
-                return@runCatching BeforeText(s, probeDocStart && beforeStartsAtDocStart(connection, limit))
-            }
-            // hintMaxChars **不能留 0**：兜底路径拿到的会是整个窗口，不限长就让大文档整篇走 Binder
-            // 回包 —— 正是上面那条 TransactionTooLargeException 的触发源。限制到读取上限即可
-            // （取哪一段由 TranslationText.extract 按范围模式决定，多读的会被字节上限截掉）。
-            val request = android.view.inputmethod.ExtractedTextRequest().apply { hintMaxChars = limit }
-            val extracted = connection.getExtractedText(request, 0) ?: return@runCatching null
-            val text = extracted.text?.toString().orEmpty()
-            // 与 [currentSelectionRange]（:591）同一口径：负下标 = 宿主没给出选区，按「读不到」处理。
-            // 不能 `coerceAtLeast(0)` 成 0 —— 那会被读成「光标在文首」，用户看到的是
-            // 「光标前没有可翻译的文字」，而真实原因是宿主不支持（2026-10-01 修复 L-240）。
-            if (extracted.selectionEnd < 0) return@runCatching null
-            val startOffset = extracted.startOffset.coerceAtLeast(0)
-            val endRel = TextSelection.toWindowOffset(
-                extracted.selectionEnd,
-                startOffset,
-                text.length,
-            ) ?: return@runCatching null
-            // 兜底返回的是「**窗口起点** → 光标」：只有当窗口本身就始于文首时，它才是从文首开始的
-            BeforeText(text.substring(0, endRel.coerceIn(0, text.length)), startOffset == 0)
-        }.getOrElse {
-            Diagnostics.w(TAG, "翻译: 读取光标前文本失败 ${it.javaClass.simpleName}")
-            null
-        }
-    }
-
-    /**
-     * 只读地取「光标后」的文本（「整行 / 整篇」两种原文范围需要）。
-     *
-     * 与 [readTextBeforeCursor] 完全同款：主路径 `getTextAfterCursor`，宿主不支持时兜底
-     * `getExtractedText` + 窗口下标换算。
-     *
-     * 返回 **null 表示读取失败**，与「光标后确实没有内容」（空串，光标在文末）严格区分：调用方
-     * （整行 / 整篇模式）拿到 null 必须拒绝发起 —— 把失败当空串会让这两种范围静默退化成
-     * 「只翻光标前」，且「末尾不可确认」那道闸不会触发（2026-10-01 修复 L-237 与 L-242）。
-     */
-    private fun readTextAfterCursor(
-        connection: android.view.inputmethod.InputConnection,
-        limit: Int,
-    ): String? {
-        return runCatching {
-            connection.getTextAfterCursor(limit, 0)?.let { return@runCatching it.toString() }
-            val request = android.view.inputmethod.ExtractedTextRequest().apply { hintMaxChars = limit }
-            val extracted = connection.getExtractedText(request, 0) ?: return@runCatching null
-            val text = extracted.text?.toString().orEmpty()
-            if (extracted.selectionEnd < 0) return@runCatching null
-            val startRel = TextSelection.toWindowOffset(
-                extracted.selectionEnd,
-                extracted.startOffset.coerceAtLeast(0),
-                text.length,
-            ) ?: return@runCatching null
-            text.substring(startRel.coerceIn(0, text.length))
-        }.getOrElse {
-            Diagnostics.w(TAG, "翻译: 读取光标后文本失败 ${it.javaClass.simpleName}")
-            null
-        }
-    }
-
     // ── 编辑键 ────────────────────────────────────────────────
 
     private fun commit(text: String) {
@@ -5202,29 +4988,6 @@ class JinnIme : InputMethodService() {
 
         /** 目录只有读授权（BUG.md L-1322）：给可完成的动作（重绑目录），别让用户反复重试 */
         const val TEXT_IMAGE_MOVE_DENIED = "该目录没有写入授权，图片仍在历史中：请重新绑定图库目录"
-
-        /** 结果回来时输入已变（续打 / 挪光标 / 有选区）：丢弃必须说话，否则用户以为「翻译坏了」 */
-        /** 译文超单条上限（与粘贴链路同一道闸，见 ClipboardStore.MAX_ITEM_BYTES） */
-        /** 原文范围超出读取窗口、末尾位置无法确认（L-213）：丢弃必须说清原因 */
-        /**
-         * 宿主不提供选区信息（`getExtractedText` 不可用）：无法确认提交会不会覆盖选中内容。
-         *
-         * 独立文案是硬要求（2026-10-01 复审 L-230）：复用「输入已变化」会把「输入框不支持」
-         * 说成「用户自己的操作」，排障方向整个带偏。
-         */
-
-        /** 请求发起时已有选区（2026-10-01 复审 L-236）：选中的正文会随原文上传，且提交必被拒 */
-        /** 译文没能写进输入框（宿主拒绝 / 连接已失效）；此前这条路径只落日志、用户端静默（L-320） */
-        /** 剪贴板面板打开时不许翻译（2026-10-02 修复）：随后的粘贴必然让这次请求作废 */
-        /** 追加位置无法确认（宿主不支持 getExtractedText，或忽略了光标移动）：宿主问题，别说成「输入已变化」（L-327） */
-        /** 光标后内容读不到（2026-10-01 复审 L-237）：整行 / 整篇无法确定原文末尾，不发起 */
-        /** 「光标前全部」在读取窗口被截断时取不到文首（2026-10-01 审查 L-277） */
-        /** 选区模式专用：选中内容超上限时替换会丢掉尾部原文，宁可拒绝（2026-10-01 审查 L-261） */
-        /** 语译互斥：录音中不发起翻译（2026-10-03 审查 B-1） */
-        const val TEXT_RECORDING_PLEASE_WAIT = "正在录音，请先结束录音再翻译"
-
-        /** 语译互斥：翻译在途不开录音（2026-10-03 审查 B-1） */
-        const val TEXT_TRANSLATING_PLEASE_WAIT = "正在翻译，请稍候再录音"
 
         /**
          * 空格长按录音缺少麦克风权限（2026-11-01）。
