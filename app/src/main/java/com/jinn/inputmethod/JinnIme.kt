@@ -564,8 +564,8 @@ class JinnIme : InputMethodService() {
         Thread {
             runCatching {
                 // ④ 2026-11-17：模型曾被手机「清除缓存」当可回收文件删掉（用户实测清缓存后
-                // 用户数据 248MB→7MB）。先把它迁到外部专属目录（Android/data/<pkg>/files），
-                // 再扫一次下载残留 —— 迁移失败会自动退回原目录，不影响可用性。
+                // 用户数据 248MB→7MB）。现在模型统一落在私有 files/local-asr，进程启动时先把
+                // 历史外部目录里的那份搬进来，再扫一次下载残留 —— 搬不动就放弃，不影响可用性。
                 LocalAsrModel.migrateIfNeeded(applicationContext)
                 LocalAsrDownloader.sweepCache(applicationContext)
                 // 自愈（2026-11-16）：残局里模型件常已经躺在别处（缓存解包目录 / 旧内部目录，
