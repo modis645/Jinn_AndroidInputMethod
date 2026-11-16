@@ -35,13 +35,15 @@ class VoiceDspTest {
     }
 
     @Test
-    fun `段首回补_无条件补足0点3秒`() {
-        // 从第 100 帧起是语音，前面全是静音；回补应该吃掉 30 帧（0.3s）
+    fun `段首回补_无条件0点3秒后按间隙窗口再退`() {
+        // 第 100 帧起才是语音，前面全是静音：先无条件退 30 帧（0.3s），
+        // 之后靠 25 帧的低能量容忍窗口再退 25 帧，合计 55 帧
         val f = frames(*BooleanArray(200) { it >= 100 })
         val startSample = 100 * VoiceDsp.FRAME_SAMPLES
         val out = VoiceDsp.onsetBacktrack(f, speechRms, startSample, 0)
-        val expected = (100 - VoiceDsp.ONSET_ALWAYS_FRAMES) * VoiceDsp.FRAME_SAMPLES
-        assertEquals("必须无条件往前 0.3s", expected, out)
+        val backFrames = VoiceDsp.ONSET_ALWAYS_FRAMES + VoiceDsp.ONSET_GAP_FRAMES
+        assertEquals("回补步数必须是 30 + 25 帧", backFrames, 100 - out / VoiceDsp.FRAME_SAMPLES)
+        assertTrue("无条件那 0.3s 必须在里面", out < 100 * VoiceDsp.FRAME_SAMPLES)
     }
 
     @Test
