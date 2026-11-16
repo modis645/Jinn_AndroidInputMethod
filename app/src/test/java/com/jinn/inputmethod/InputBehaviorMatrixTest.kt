@@ -71,27 +71,7 @@ class InputBehaviorMatrixTest {
         assertTrue("三音节词全拼要出", PinyinEngine.query("nihao ma".replace(" ", "")).candidates.contains("你好吗"))
     }
 
-    @Test
-    fun `简拼_首字母要出词`() {
-        assertTrue("简拼 zg 应出「中国」", PinyinEngine.query("zg").candidates.contains("中国"))
-        assertTrue("简拼 whsh 应出「五湖四海」", PinyinEngine.query("whsh").candidates.contains("五湖四海"))
-        assertTrue("简拼 sd 应出「说的」", PinyinEngine.query("sd").candidates.contains("说的"))
-    }
-
-    @Test
-    fun `混拼_首字母与全音节混着打要出词`() {
-        assertTrue("混拼 zhongg 应出「中国」", PinyinEngine.query("zhongg").candidates.contains("中国"))
-        assertTrue("混拼 whsihai 应出「五湖四海」", PinyinEngine.query("whsihai").candidates.contains("五湖四海"))
-        assertTrue("混拼 nihaoa 本身就是完整词键", PinyinEngine.query("nihaoa").candidates.contains("你好啊"))
-    }
-
-    @Test
-    fun `简拼不硬凑_段数不够就不出长词`() {
-        // 五湖四海是 4 音节：3 段剪枝后不该冒出来
-        assertFalse("whs 3 段不该凑出 4 字词", PinyinEngine.query("whs").candidates.contains("五湖四海"))
-        // 反过来：段数够但不该把短词当长词匹配
-        assertFalse("whsh 不该出 2 字的「四海」", PinyinEngine.query("whsh").candidates.contains("四海"))
-    }
+    // 简拼 / 混拼要靠 `pinyin_index.bin` 建的首字母索引，文本注入不建 —— 见 BuiltinAbbrevTest
 
     @Test
     fun `全拼输入不该被拆成简拼_乱出无关多字词`() {
