@@ -29,7 +29,7 @@ class SettingsSwitchLayoutTest {
         "switch_predict",
         "switch_auto_show_keyboard",
         "switch_use_traditional",
-        "switch_translate",
+        // 2026-11-16：switch_translate（翻译总开关）随在线翻译下线一并删除，不再列入
     )
 
     @Test
