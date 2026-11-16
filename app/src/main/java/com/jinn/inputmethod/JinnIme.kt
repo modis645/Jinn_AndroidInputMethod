@@ -4674,6 +4674,7 @@ class JinnIme : InputMethodService() {
             Diagnostics.i(TAG, "stopRecording: 取消（不采用结果）")
             // 取消要把「边说边出」写下的组合态撤掉，否则输入框里留一段半截字
             clearVoiceComposing()
+            echoVoiceText(null)
             setHint(getString(R.string.hint_cancelled))
         }
     }
@@ -4798,6 +4799,11 @@ class JinnIme : InputMethodService() {
         runCatching { currentInputConnection?.finishComposingText() }
     }
 
+    /** 录音实时文本回显：`pinyinView` 声明成 View，这里转型后交给视图自己画 */
+    private fun echoVoiceText(text: String?) {
+        (pinyinView as? PinyinKeyboardView)?.setVoiceEcho(text)
+    }
+
     private fun handleResult(message: RecognitionMessage) {
         // 归属校验：松手后服务端还要 1~3 秒才回结果，期间用户可能已切到别的应用。
         // 跨应用落字属隐私问题（用户没打算往那个输入框写字），与暂存粘贴同一条口径。
@@ -4827,11 +4833,15 @@ class JinnIme : InputMethodService() {
             // 边说边出（2026-11-17 用户要求「至少说完一句可以出一句」）：
             // 中途结果写进组合态，屏上随说随出；最终结果 commitText 会整段覆盖它，不会重复。
             showVoiceComposing(text)
+            // 键盘自己的拼音条同步回显：宿主吞掉组合态时用户仍然看得见字
+            echoVoiceText(text)
             if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "handleResult: 中途结果 ${message.duration.toInt()}s \"${text.take(40)}\"")
             setHint(getString(R.string.hint_progress, message.duration.toInt()))
             return
         }
 
+        // 回显到最终结果为止：拼音条上的实时文本由 commitText 的正文接手
+        echoVoiceText(null)
         // 结果已到：清掉等待态与兜底任务（否则 60s 后还会改一次状态条文字）
         awaitingResult = false
         voiceResultPackage = null
