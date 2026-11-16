@@ -710,7 +710,8 @@ class GalleryInsertTest {
         val panelBody = TestSources.blockAfter(view, "private fun renderFunctionPanel()")
         val earlyOutAt = panelBody.indexOf("功能面板(搜索态): 退出")
         assertTrue("renderFunctionPanel 里找不到搜索态早退的日志锚点", earlyOutAt > 0)
-        for (field in listOf("translateButtonBox", "directionButtonBox", "galleryButtonBox")) {
+        // 2026-11-16：translateButtonBox（翻译键）随在线翻译下线一并删除，这里只余两个
+        for (field in listOf("directionButtonBox", "galleryButtonBox")) {
             val clearAt = panelBody.indexOf("$field = null")
             assertTrue(
                 "搜索态早退分支没清 $field（L-1038；清引用必须落在早退之前）",
