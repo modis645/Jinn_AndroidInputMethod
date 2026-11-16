@@ -1355,17 +1355,19 @@ class PinyinKeyboardView @JvmOverloads constructor(
         btnVoiceLevel = root.findViewById(R.id.key_voice_level)
         btnSpaceLevel = root.findViewById(R.id.key_space_level)
         voiceOverlay = VoiceLevelView(context).also { bar ->
+            // 落点：贴在底行之上、横跨整盘。**不能贴在顶边** —— 那里是候选栏，
+            // 候选栏自带更高的 elevation，会把浮层整条盖住（v66 用户看不到浮层就是这个原因）。
             val lp = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
-                dpFloat(14f).toInt(),
+                dpFloat(22f).toInt(),
             )
-            lp.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            lp.leftMargin = dpFloat(28f).toInt()
-            lp.rightMargin = dpFloat(28f).toInt()
-            lp.topMargin = dpFloat(10f).toInt()
+            lp.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            lp.leftMargin = dpFloat(16f).toInt()
+            lp.rightMargin = dpFloat(16f).toInt()
+            lp.bottomMargin = dpFloat(62f).toInt()
             bar.layoutParams = lp
             bar.visibility = View.GONE
-            bar.elevation = dpFloat(6f)
+            bar.elevation = dpFloat(30f)
             (root as? FrameLayout)?.addView(bar)
         }
         keySemicolon = root.findViewById(R.id.key_semicolon)
@@ -3693,7 +3695,30 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 无拼音串（null / 空）：拼音条 GONE，候选区占满整栏（功能面板 / 符号分组）。
      * 预测态没有拼音串但仍有可清空的内容，走 [showPinyinBarOnly]。
      */
+    /**
+     * 录音中的实时文本，写在拼音条上。
+     *
+     * 为什么还要这一条：宿主是否显示「组合态」不受我们控制（部分 App 会吞掉 composing，
+     * 直到 commitText 才出现字）。拼音条是我们自己的 TextView，一定看得见 ——
+     * 用户 2026-11-17 反馈「还是等结束才出字」，这里给出一条必定可见的回显通道。
+     */
+    private var voiceEcho: String? = null
+
+    /** 写入 / 清除录音回显；传 null 表示录音结束，交还给拼音显示 */
+    fun setVoiceEcho(text: String?) {
+        if (voiceEcho == text) return
+        voiceEcho = text
+        showPinyin(if (text == null) null else "")
+    }
+
     private fun showPinyin(text: String?) {
+        val echo = voiceEcho
+        if (echo != null) {
+            pinyinBar.visibility = View.VISIBLE
+            viewCandidatePinyin.text = echo
+            applyPinyinInset()
+            return
+        }
         val empty = text.isNullOrEmpty()
         if (!empty) holdBarHeightOnEmpty = false
         pinyinBar.visibility = when {
@@ -5135,7 +5160,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val scaled = VOICE_LEVEL_FLOOR + (1f - VOICE_LEVEL_FLOOR) * level.coerceIn(0f, 1f)
         voiceOverlay?.let { bar ->
             if (bar.visibility != View.VISIBLE) bar.visibility = View.VISIBLE
-            bar.setFraction(scaled)
+            bar.push(scaled)
         }
         val drawnLong = drawBar(btnVoiceLevel, btnVoiceLong, scaled)
         val drawnSpace = drawBar(btnSpaceLevel, btnSpace, scaled)
@@ -5171,7 +5196,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private fun clearVoiceLevel() {
         lastVoiceLevel = 0f
         voiceOverlay?.let { bar ->
-            bar.setFraction(0f)
+            bar.reset()
             if (bar.visibility != View.GONE) bar.visibility = View.GONE
         }
         for (bar in listOfNotNull(btnVoiceLevel, btnSpaceLevel)) {
