@@ -91,12 +91,31 @@ class SettingsWiringAuditTest {
     }
 
     @Test
+    fun `已删入口的页面不许再被打开`() {
+        // PunctOutputActivity / TapSoundActivity：入口 2026-11-16 已删除，清单也不再注册。
+        // 留存这两个类只为历史代码可查，任何 startActivity 指向它们都是「点了没反应」。
+        val retired = listOf("PunctOutputActivity", "TapSoundActivity")
+        val manifest = TestSources.codeOf(
+            TestSources.rawSource(
+                "src/main/AndroidManifest.xml",
+                "app/src/main/AndroidManifest.xml",
+            ),
+        )
+        val callers = srcDir.listFiles { f -> f.name.endsWith(".kt") }?.filter { f ->
+            retired.any { name -> Regex("""startActivity.*${name}|${name}::class""").containsMatchIn(f.readText()) }
+        }?.map { it.name } ?: emptyList()
+        assertEquals("这些页面入口已删却仍被打开：$callers", emptyList<String>(), callers)
+        assertTrue("已删入口的页面不该在清单里注册",
+            retired.none { ".$it" in manifest })
+    }
+
+    @Test
     fun `每个设置子页面的入口都能打开`() {
         // 页面类存在 + 在 AndroidManifest 里注册过，否则点了就闪退/无反应
         val pages = listOf(
             "KeyAppearanceActivity", "TapSoundActivity", "ClipboardCustomizeActivity",
             "ClipboardHistoryActivity", "GallerySettingsActivity", "VoiceSettingsActivity",
-            "PunctOutputActivity", "FuzzyPinyinActivity", "UserDictActivity",
+            "FuzzyPinyinActivity", "UserDictActivity",
             "DictManagerActivity", "RareCharsActivity", "SymbolOrderActivity",
             "FavoriteSymbolsActivity", "StorageUsageActivity", "FloatingKeyboardActivity",
         )
