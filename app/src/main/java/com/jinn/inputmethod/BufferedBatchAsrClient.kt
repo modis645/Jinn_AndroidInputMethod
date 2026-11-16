@@ -9,6 +9,8 @@ import java.io.ByteArrayOutputStream
 import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.UUID
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -143,10 +145,40 @@ abstract class BufferedBatchAsrClient(
         return id
     }
 
+    /**
+     * float32 小端 → PCM16 小端（16k / 单声道）。
+     *
+     * 原先放在讯飞的协议工具类里（唯一使用点其实在这里），在线后端整体删除后搬回本类：
+     * 采集端给 [MicRecorder] 的 float32，而模型 / WAV 都要 16bit。
+     * **不乘增益**（音量交给系统的 `VOICE_RECOGNITION` 源），并饱和钳位到 [-1, 1]：
+     * 越界浮点（部分机型偶发）不能回绕成反相爆音。
+     */
+    private fun float32ToPcm16(src: ByteArray): ByteArray {
+        val samples = src.size / 4
+        val out = ByteBuffer.allocate(samples * 2).order(ByteOrder.LITTLE_ENDIAN)
+        val input = ByteBuffer.wrap(src).order(ByteOrder.LITTLE_ENDIAN)
+        for (i in 0 until samples) {
+            val v = input.getFloat()
+            val pcm = if (v.isNaN()) {
+                0
+            } else {
+                val clamped = v.coerceIn(-1f, 1f)
+                val scaled = if (clamped >= 0f) {
+                    (clamped * 32767f + 0.5f).toInt()
+                } else {
+                    (clamped * 32768f - 0.5f).toInt()
+                }
+                scaled.coerceIn(-32768, 32767)
+            }
+            out.putShort(pcm.toShort())
+        }
+        return out.array()
+    }
+
     override fun sendChunk(pcmFloat32LittleEndian: ByteArray) {
         if (taskId == null) return
         // 转换在采集线程上做（无锁、纯 CPU），入队瞬时完成，不会卡住麦克风
-        val pcm16 = XfIatProtocol.float32ToPcm16(pcmFloat32LittleEndian)
+        val pcm16 = float32ToPcm16(pcmFloat32LittleEndian)
         synchronized(pcm) {
             // 缓冲上限 60 秒：58 秒自动收尾正常走不到这里（[JinnIme.XF_MAX_TASK_MS]），
             // 能走到只有一种情况 —— 收尾定时器没了（视图销毁 / 定时器被撤 / 采集停不下来）。
