@@ -82,9 +82,6 @@ internal object LocalAsrDownloader {
         Diagnostics.i("LocalAsr", message)
     }
 
-    fun logText(context: Context): String =
-        runCatching { logFile(context).readText() }.getOrDefault("").ifBlank { "（暂无日志）" }
-
     /** 日志尾部若干行（卡片里直接显示用） */
     fun logTail(context: Context, lines: Int = 12): String {
         val all = runCatching { logFile(context).readText() }.getOrDefault("").trim()
