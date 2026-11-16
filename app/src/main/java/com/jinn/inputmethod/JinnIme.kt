@@ -3467,10 +3467,6 @@ class JinnIme : InputMethodService() {
         super.onUpdateSelection(
             oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd,
         )
-        // 宿主文本 / 光标变化 ⇒ 用户已在输入：展开的动作排一并收起（2026-10-09）。
-        // 放在 super 之后第一行、所有早退之前 —— 英文 / 符号 / 数字层走 `onCommitText` 直出上屏，
-        // 不刷新候选栏，refreshCandidateBar 的兜底判据覆盖不到这条路径。
-        pinyinKeyboard?.resetActionPanel()
         // 先认领：命中任意一个在途期望值就是我们自己造的（乱序回调也能认出，见 SelectionExpectations）。
         // 认领要在 selectionActive 判断之前做 —— 不在拖选时同样要把期望消费掉，不能留着垫给外部变化。
         val ours = selectionExpectations.consumeIfOurs(newSelStart, newSelEnd)
@@ -3644,21 +3640,13 @@ class JinnIme : InputMethodService() {
 
     /**
      * 会话边界（比 [onStartInputView] **更早**，且不依赖窗口是否显示）：宿主调 `restartInput()`
-     * 或同会话内换框而框架跳过 `doFinishInput` 时，上一个输入框的在途翻译必须作废
-     * （2026-10-03 修复 L-496）—— 否则结果可能落回旧框、或经旧 connection 落到别处。
+     * 或同会话内换框而框架跳过 `doFinishInput` 时，会话级的隐私态与记录要一并复位。
      */
     override fun onStartInput(info: EditorInfo?, restarting: Boolean) {
         super.onStartInput(info, restarting)
-        // notify：这一类边界用户最可能没预期（切框 / 旋转 / 分屏拖动），丢的又往往是
-        // 已经出网、正在计费的大模型请求（2026-10-03 修复 L-603）
-        // 去重指纹**跨输入框无意义**：A 框翻过的 "hello"，在 B 框输入 "hello" 后点翻译会被
-        // 自己的去重挡回去，而提示让用户「改动原文」—— 在新框里改这句毫无意义（2026-10-03 修复 L-655）。
-        lastSentKey = ""
-        // 结果侧指纹同理（BUG.md L-1308）：B 框里恰好有同一段文本时不该被 A 框的记录拦下
-        lastCommittedText = ""
         // 隐私抑制要在这里就算出来：本回调比 [onStartInputView] 更早，而框架在「同会话内换框 /
-        // restartInput()」时**可能不重发** onStartInputView（`startTranslate` 的密码框判据处即实例，
-        // 见本文件「焦点从普通框切到密码框可能不重发该回调」那段说明）。
+        // restartInput()」时**可能不重发** onStartInputView，
+        // 见本文件「焦点从普通框切到密码框可能不重发该回调」那段说明。
         // 晚一步算的后果是：在密码框里选候选会被写进 user_freq.txt。
         // ⚠ 但**不能**在这里调 `configure()` / `commitComposing()` 清 composing：本回调早于宿主
         // 结束组合态，此时清 IME 侧 composing 而不经宿主，宿主会把残余拼音当纯文本补进旧框
@@ -4609,7 +4597,7 @@ class JinnIme : InputMethodService() {
     private fun stripTrailingPunc(text: String): String =
         text.trimEnd().trimEnd(*TRAILING_PUNC)
 
-
+    private fun moveCursorByOffset(
         connection: android.view.inputmethod.InputConnection,
         offset: Int,
     ): Boolean {
