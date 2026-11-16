@@ -1231,7 +1231,11 @@ private const val LOG_SEGMENTS_KEPT = 2
                     }
                 }
                 val dest = File(outDir, "jinn-diagnostics-$stamp.zip")
-                val files = srcDir.listFiles()?.toList().orEmpty()
+                // 日志目录之外还有一份「语音模型下载日志」（LocalAsrDownloader 写在 filesDir）：
+                // 用户反馈「下载日志看不到」就是因为导出包只打了日志目录。存在就一起带走。
+                val extraLog = File(context.filesDir, "local-asr-download.log")
+                val files = srcDir.listFiles()?.toList().orEmpty() +
+                    (if (extraLog.isFile) listOf(extraLog) else emptyList())
                 if (files.isEmpty()) return@runCatching ExportOutcome.Failed("无日志可打包")
                 // 原子写：先写临时文件再改名。导出包是要交给别人排查的，半截 zip（进程被杀 /
                 // 并发导出撞同一路径）等于白导；临时名带纳秒，两次导出各写各的、改名原子生效。
