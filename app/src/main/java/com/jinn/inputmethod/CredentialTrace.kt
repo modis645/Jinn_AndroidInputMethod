@@ -44,17 +44,17 @@ internal object CredentialTrace {
     }
 
     /**
-     * 本机已配置的全部凭据（9 个键），供**不经过设置页**的落盘路径取目标（备份导入，见
+     * 本机已配置的全部听写凭据，供**不经过设置页**的落盘路径取目标（备份导入，见
      * `ConfigBackupManager.scheduleCredentialPurge`）。
      *
      * 与翻译设置页、OpenAI 兼容配置页的不留痕目标同源：单列一处，避免两条路径各写一份键清单
      * 后漏掉新服务方（OpenAI 页另加自定义请求头 / JSON 里的值，见 [candidatesFrom]）。
      */
     fun configuredValues(prefs: Prefs): List<String> = listOf(
-        prefs.aliyunAccessKeyId, prefs.aliyunAccessKeySecret,
-        prefs.azureApiKey, prefs.baiduAppId, prefs.baiduSecretKey,
-        prefs.baiduLlmAppId, prefs.baiduLlmApiKey, prefs.deeplApiKey,
-        prefs.openAiApiKey,
+        prefs.xfAppId, prefs.xfApiKey, prefs.xfApiSecret,
+        prefs.tencentSecretId, prefs.tencentSecretKey,
+        prefs.azureSpeechKey, prefs.baiduSpeechApiKey, prefs.baiduSpeechSecretKey,
+        prefs.deepgramApiKey, prefs.oaiApiKey, prefs.aliApiKey,
     )
 
     /**
