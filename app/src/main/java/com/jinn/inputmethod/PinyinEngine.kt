@@ -2413,11 +2413,17 @@ object PinyinEngine {
         return buildString(split.size) { for (s in split) append(s[0]) }
     }
 
-    private fun matchesByReading(word: String, segs: List<String>): Boolean {
+    private fun matchesByReading(word: String, segs: List<String>, trustUnknownChar: Boolean = false): Boolean {
         if (word.length != segs.size) return false
         for (i in segs.indices) {
             val syls = syllablesOfChar(word[i])
-            if (syls.isEmpty()) return false
+            // 字表里查不到这个字（生僻字 / 姓名用字）时：内置词条一律不信，
+            // 自造词则信它自己的读音 —— 那是用户自己全拼打进去、台账记下的真实读法，
+            // 用内置字表把它否掉只会让「刚收录的词首字母打不出」。
+            if (syls.isEmpty()) {
+                if (trustUnknownChar) continue
+                return false
+            }
             val seg = segs[i]
             val ok = if (seg.length == 1) {
                 syls.any { it[0] == seg[0] }
@@ -2623,8 +2629,9 @@ object PinyinEngine {
         // 索引一律在后台线程建好再用：建索引要遍历全部词库键，放在按键路径上会拖住 UI
         // 线程（2026-11-15 实测「输入法无法调用 / 闪退」，就是首键触发建索引被系统判成
         // 无响应）。没建好时先不出简拼候选，建好后自然出现。
-        val index = initialsIndex ?: return emptyList()
-        if (index.isEmpty()) return emptyList()
+        // 注意：内置索引缺失/为空时**不能**直接 return —— 自造词不在那个索引里，
+        // 那段慢查询（collectUserWords）照样要跑，否则「刚收录的词首字母打不出来」。
+        val index: Array<Pair<String, String>> = initialsIndex ?: emptyArray()
 
         val out = ArrayList<Pair<String, Int>>(ABBREV_MAX_WORDS)
         val seen = HashSet<String>(ABBREV_MAX_WORDS * 2)
@@ -2655,13 +2662,18 @@ object PinyinEngine {
             for ((key, list) in userWords) {
                 if (out.size >= ABBREV_MAX_WORDS) return
                 // 快筛：自造词键的首字母串必须对上投影串（与内置词同一判据，先挡掉绝大多数）
-                if (!initialLettersOf(key).let { it == null || !it.startsWith(projectionLetters) }) continue
+                // ⚠ 2026-11-16 修：这里原来是 `if (!initialLettersOf(key).let { it == null || !it.startsWith(p) }) continue`，
+                // 取反把判据整个翻过来了 —— 首字母**对得上**的词被 continue 掉，对不上的反而放行，
+                // 于是自造词全拼打得出来、首字母永远搜不到。判据写成「取前缀失败才跳过」。
+                // 拆不干净（null）时不拦：交给下面的 DP 判，宁可多算一条也别漏词
+                val initials = initialLettersOf(key)
+                if (initials != null && !initials.startsWith(projectionLetters)) continue
                 if (!matchesSegments(key, segs)) continue
                 val ranked = UserFrequency.rank(list.map { it.word }.toTypedArray()) { toSimplified(it) }
                 for (w in displayTake(ranked.asList(), MAX_PHRASES)) {
                     if (out.size >= ABBREV_MAX_WORDS) return
                     if (!seen.add(w)) continue
-                    if (!matchesByReading(w, segs)) continue
+                    if (!matchesByReading(w, segs, trustUnknownChar = true)) continue
                     out.add(w to segs.size)
                 }
             }
