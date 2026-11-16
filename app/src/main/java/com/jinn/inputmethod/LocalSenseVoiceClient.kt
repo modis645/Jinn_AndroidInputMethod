@@ -53,7 +53,7 @@ internal class LocalSenseVoiceClient(
             "离线解码完成 音频=${pcm16.size / 2 / SAMPLE_RATE.toFloat()}s " +
                 "耗时=${System.currentTimeMillis() - started}ms 字数=${text.length}",
         )
-        return BatchOutcome.Ok(text.trim())
+        return BatchOutcome.Ok(finishText(text))
     }
 
     // ── 「边说边出」：录音期间每 0.9 秒把当前缓冲解一次，作为组合态回显 ──
@@ -180,7 +180,7 @@ internal class LocalSenseVoiceClient(
                     debug = false,
                 ),
             )
-            val builder = StringBuilder()
+            val sentences = ArrayList<String>()
             var pieces = 0
             var coveredSamples = 0L
             // ── 段首能量回补（用户 2026-11-16：「长录音丢句首 1~4 字」）──
@@ -221,7 +221,8 @@ internal class LocalSenseVoiceClient(
                             try {
                                 stream.acceptWaveform(slice, SAMPLE_RATE)
                                 recognizer.decode(stream)
-                                builder.append(recognizer.getResult(stream).text)
+                                val piece = recognizer.getResult(stream).text.trim()
+                                if (piece.isNotEmpty()) sentences.add(piece)
                                 pieces++
                             } finally {
                                 stream.release()
@@ -247,9 +248,37 @@ internal class LocalSenseVoiceClient(
             // 根因是 VAD 把大半段低音量语音判成静音，送去解码的只是开头一小段。
             // 覆盖不到一半时直接返回 null，调用方退回整段解码 —— 宁可慢一点，不许丢话。
             if (coveredSamples < samples.size / 2L) null
-            else if (builder.isBlank()) null
-            else builder.toString()
+            else if (sentences.isEmpty()) null
+            else joinSentences(sentences)
         }.getOrNull()
+
+    /**
+     * 分句拼接：SenseVoice 逐句解码时，句子之间**没有任何分隔**，拼出来是一整串没有逗号的长句
+     * （用户 2026-11-17「标点加得比较少」的主因）。VAD 切出来的句边界就是天然的句子边界，
+     * 所以句尾缺标点的补「，」，最后一句补「。」—— 只依据「模型自己说出了句子边界」，
+     * 不猜语义。
+     */
+    private fun joinSentences(sentences: List<String>): String {
+        val sb = StringBuilder()
+        for ((i, raw) in sentences.withIndex()) {
+            val piece = raw.trim()
+            if (piece.isEmpty()) continue
+            sb.append(piece)
+            if (sb.last() in SENTENCE_END) continue
+            sb.append(if (i == sentences.lastIndex) '。' else '，')
+        }
+        return sb.toString()
+    }
+
+    /**
+     * 整段解码（不走 VAD）时的收尾：模型多数情况自带句末标点，缺了就补一个「。」
+     * 没有它，长段落会在输入框里连成一串、看不出哪里是句尾。
+     */
+    private fun finishText(raw: String): String {
+        val t = raw.trim()
+        if (t.isEmpty()) return t
+        return if (t.last() in SENTENCE_END) t else t + "。"
+    }
 
     /** 10ms 一帧的 RMS（0..1，float 域）；不足一帧的尾巴丢掉（对回补判据无影响） */
     private fun frameEnergies(samples: FloatArray): FloatArray {
@@ -341,6 +370,9 @@ internal class LocalSenseVoiceClient(
 
         /** 缓冲每多 0.5 秒才再解一次 */
         const val PARTIAL_STEP_BYTES = 8000
+
+        /** 视为「这句话已经说完」的字符：出现它就不要再补标点 */
+        val SENTENCE_END = charArrayOf('。', '！', '？', '.', '!', '?', '…')
 
         /** 解码串行化（recognizer / stream 都非线程安全） */
         val lock = Any()
