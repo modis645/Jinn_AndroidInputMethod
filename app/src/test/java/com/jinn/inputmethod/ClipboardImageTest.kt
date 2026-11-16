@@ -280,7 +280,7 @@ class ClipboardImageTest {
         )
         assertTrue(
             "面板三个动作的顺序：转图库在前",
-            "val actions = listOf(actionMove, actionFavorite, actionDelete)" in panel,
+            "val actions = listOf(actionSegment, actionMove, actionFavorite, actionDelete)" in panel,
         )
         val histMenu = TestSources.codeSource("ClipboardHistoryActivity.kt")
         // BUG.md L-1336：两处菜单**不同源是有意的** —— 面板三项（贴着输入法、点条目即上屏，复制 / 保存留在预览对话框），
