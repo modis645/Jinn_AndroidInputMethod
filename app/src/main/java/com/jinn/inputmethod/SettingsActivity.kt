@@ -223,9 +223,6 @@ class SettingsActivity : ComponentActivity() {
         // 换包名后的第一次进入：把旧包（com.jinn.inputmethod）的偏好与已下载模型搬过来。
         // 只补缺不覆盖，旧包不存在则静默跳过（见 LegacyMigration）。
         LegacyMigration.runOnce(this)
-        // 在线翻译已下线：老偏好（含旧包迁移来的 translateEnabled）一律关掉，
-        // 否则键盘功能面板里还会出现一个无处配置的「翻译」键
-        prefs.translateEnabled = false
 
         // 「拼音输入方案」卡 2026-11-15 已整卡删除（用户只留全拼，双拼/键面韵母一并下线）：
         // 控件在代码里保留为 stub，读写逻辑（useShuangpin=false 强制全拼）不变。
