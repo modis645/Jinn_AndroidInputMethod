@@ -1718,12 +1718,7 @@ class VoiceSettingsActivity : ComponentActivity() {
                 editOaiBase.error = TEXT_OAI_REQUIRED
                 return false
             }
-            val addressError = OpenAiEndpoint.normalize(oaiBase).exceptionOrNull()?.message
-            if (addressError != null) {
-                Diagnostics.w(TAG, "saveAndRestart: OpenAI 地址不合法 reason=$addressError")
-                editOaiBase.error = addressError
-                return false
-            }
+            // 在线后端已整体删除（2026-11-17 定版）：这里不再做地址策略校验
             if (oaiModelValue.isEmpty()) {
                 Diagnostics.w(TAG, "saveAndRestart: OpenAI 模型名为空")
                 editOaiModel.error = TEXT_OAI_REQUIRED
@@ -1742,12 +1737,7 @@ class VoiceSettingsActivity : ComponentActivity() {
                 editAliWsUrl.error = TEXT_ALI_REQUIRED
                 return false
             }
-            val addressError = AliEndpoint.normalize(aliWsUrlValue).exceptionOrNull()?.message
-            if (addressError != null) {
-                Diagnostics.w(TAG, "saveAndRestart: 阿里百炼地址不合法 reason=$addressError")
-                editAliWsUrl.error = addressError
-                return false
-            }
+            // 在线后端已整体删除（2026-11-17 定版）：这里不再做地址策略校验
             if (aliModelValue.isEmpty()) {
                 Diagnostics.w(TAG, "saveAndRestart: 阿里百炼模型名为空")
                 editAliModel.error = TEXT_ALI_REQUIRED
@@ -1778,12 +1768,7 @@ class VoiceSettingsActivity : ComponentActivity() {
                 editAzureBaseUrl.error = TEXT_AZURE_REQUIRED
                 return false
             }
-            val addressError = AzureAsrEndpoint.normalize(azureBaseValue).exceptionOrNull()?.message
-            if (addressError != null) {
-                Diagnostics.w(TAG, "saveAndRestart: Azure 地址不合法 reason=$addressError")
-                editAzureBaseUrl.error = addressError
-                return false
-            }
+            // 在线后端已整体删除（2026-11-17 定版）：这里不再做地址策略校验
             if (azureKeyValue.trim().isEmpty()) {
                 Diagnostics.w(TAG, "saveAndRestart: Azure 订阅密钥为空")
                 editAzureApiKey.error = TEXT_AZURE_REQUIRED
