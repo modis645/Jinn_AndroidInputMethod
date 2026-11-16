@@ -21,7 +21,10 @@ import org.junit.Test
 class KeyboardKeyInventoryTest {
 
     private val layout: String
-        get() = TestSources.rawSource("app/src/main/res/layout/keyboard_pinyin.xml")
+        get() = TestSources.rawSource(
+            "src/main/res/layout/keyboard_pinyin.xml",
+            "app/src/main/res/layout/keyboard_pinyin.xml",
+        )
 
     private val viewCode: String
         get() = TestSources.codeOf(TestSources.rawSourceOfShortName("PinyinKeyboardView.kt"))
@@ -123,8 +126,11 @@ class KeyboardKeyInventoryTest {
     @Test
     fun `底行四键宽度与职责正确`() {
         // 用户 2026-11-15 要求「空格加长 + ，。 合并 + 腾键做长语音」
-        val spaceBlock = layout.substringAfter("android:id=\"@+id/key_space\"")
-            .substringBefore("</LinearLayout>")
+        val spaceBlock = TestSources.window(
+            layout,
+            "android:id=\"@+id/key_space\"",
+            "</LinearLayout>",
+        )
         assertTrue("空格必须 weight 拉伸（宽于退格）", "android:layout_weight=\"3.2\"" in spaceBlock)
         assertTrue("空格键内要有电平条", "@+id/key_space_level" in spaceBlock)
         assertTrue("，。 必须合并为一个键", "@+id/key_comma_period" in layout)
