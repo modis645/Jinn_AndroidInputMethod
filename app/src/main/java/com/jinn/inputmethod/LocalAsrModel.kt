@@ -196,11 +196,20 @@ internal object LocalAsrModel {
      * 用途是决定「先自愈」还是「直接重下」：不先问就重下，会把一个只差改名的 240MB 文件
      * 再下一遍；先问一下，绝大多数残局都能在 1 秒内修好。
      */
-    fun canRepair(context: Context): Boolean {
-        val d = dir(context)
-        if (audit(context).ready) return false
+    fun canRepair(context: Context): Boolean =
+        canRepairIn(
+            dir(context),
+            File(context.cacheDir, "local-asr-unpack"),
+            audit(context).ready,
+        )
+
+    /**
+     * 「有没有可救的东西」的实际实现：只看文件名与大小，不碰 Context。
+     * 抽成按目录调用是为了能测 —— 这条判定错了，要么白白重下 163MB，要么把残局判成没救。
+     */
+    fun canRepairIn(d: File, unpack: File, ready: Boolean): Boolean {
+        if (ready) return false
         val names = listOf(MODEL_FILE, TOKENS_FILE)
-        val unpack = File(context.cacheDir, "local-asr-unpack")
         val partHit = d.listFiles().orEmpty().any { f ->
             if (!f.isFile || !f.name.endsWith(".part")) return@any false
             val base = f.name.removeSuffix(".part")
@@ -209,8 +218,7 @@ internal object LocalAsrModel {
         val elsewhere = names.any { n ->
             val have = File(d, n).let { it.isFile && it.length() >= minBytesOf(n) }
             if (have) return@any false
-            val inUnpack = File(unpack, n).let { it.isFile && it.length() >= minBytesOf(n) }
-            inUnpack
+            File(unpack, n).let { it.isFile && it.length() >= minBytesOf(n) }
         }
         return partHit || elsewhere
     }
@@ -227,7 +235,13 @@ internal object LocalAsrModel {
     fun repair(context: Context): Boolean {
         val d = dir(context)
         if (!d.isDirectory) d.mkdirs()
-        if (audit(context).ready) return true
+        return repairIn(d, File(context.cacheDir, "local-asr-unpack"))
+    }
+
+    /** [repair] 的实际实现（纯文件操作，可对临时目录跑）：返回自愈后是否就绪 */
+    fun repairIn(d: File, unpack: File): Boolean {
+        if (!d.isDirectory) d.mkdirs()
+        if (auditDir(d).ready) return true
         var changed = false
 
         // ① 就地修 .part（同分区改名，毫秒级）
@@ -239,7 +253,7 @@ internal object LocalAsrModel {
                     dst.delete()
                     if (part.renameTo(dst)) {
                         changed = true
-                        Diagnostics.i("LocalAsr", "自愈：$base.part 改名为 $base")
+                        logInfo("自愈：$base.part 改名为 $base")
                     }
                 } else {
                     runCatching { part.delete() }
@@ -248,22 +262,24 @@ internal object LocalAsrModel {
         }
 
         // ②③ 从缓存解包目录补齐
-        val unpack = File(context.cacheDir, "local-asr-unpack")
         for (name in listOf(MODEL_FILE, TOKENS_FILE, VAD_FILE)) {
             val target = File(d, name)
             if (target.isFile && target.length() >= minBytesOf(name)) continue
-            for (src in listOf(File(unpack, name))) {
-                if (src.absolutePath == target.absolutePath) continue
-                if (!src.isFile || src.length() < minBytesOf(name)) continue
-                if (copyInto(src, target)) {
-                    changed = true
-                    Diagnostics.i("LocalAsr", "自愈：从 ${src.parentFile?.absolutePath} 补入 $name")
-                    break
-                }
+            val src = File(unpack, name)
+            if (src.absolutePath == target.absolutePath) continue
+            if (!src.isFile || src.length() < minBytesOf(name)) continue
+            if (copyInto(src, target)) {
+                changed = true
+                logInfo("自愈：从 ${src.parentFile?.absolutePath} 补入 $name")
             }
         }
-        if (changed) Diagnostics.i("LocalAsr", "自愈后 " + audit(context).line())
-        return audit(context).ready
+        if (changed) logInfo("自愈后 " + auditDir(d).line())
+        return auditDir(d).ready
+    }
+
+    /** 自愈日志；单测在纯 JVM 里跑时 Diagnostics 不可用，失败即忽略（不影响搬文件结果） */
+    private fun logInfo(message: String) {
+        runCatching { Diagnostics.i("LocalAsr", message) }
     }
 
     /** 复制成 .part 再改名（跨分区也安全），失败不留件 */
