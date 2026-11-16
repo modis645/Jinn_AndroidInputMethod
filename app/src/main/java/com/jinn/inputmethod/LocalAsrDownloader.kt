@@ -49,6 +49,18 @@ internal object LocalAsrDownloader {
     @Volatile
     private var cancelled = false
 
+    /**
+     * 本次任务的开跑时刻（0 = 没在跑）。
+     *
+     * 用途：设置页进来时若「标记在跑」但其实一点动静都没有（没有阶段、没有进度、也没有过多久），
+     * 说明上一次任务的收尾没走到（进程被系统冻结 / 线程根本没起来）。这种残局下一次要等
+     * 60 秒看门狗才解开，期间按钮一直显示「取消下载」——正是用户报的「显示取消下载、实际没下载」。
+     * 页面据此直接把它判死并放开按钮。
+     */
+    @Volatile
+    var startedAtMs: Long = 0L
+        private set
+
     fun isRunning(): Boolean = running
 
     /** 最近一次失败原因（设置页在「未就绪」态下常态展示，不再一闪而过） */
@@ -147,10 +159,10 @@ internal object LocalAsrDownloader {
     /**
      * 把一个已下好 / 已解好的临时件放进模型目录。
      *
-     * 关键点（2026-11-17 真机反馈「解包失败：无法写入模型目录」）：临时件在 `cacheDir`（内部存储），
-     * 模型目录已改成**外部专属目录** `Android/data/<pkg>/files/local-asr` —— 两者不是一个分区，
-     * `renameTo` 一律返回 false。所以同分区仍走改名（原子、零拷贝），跨分区退化成「先复制成 .part
-     * 再在目标目录内改名」，写完核对字节数，任何一步失败都不留半截文件。
+     * 关键点（2026-11-17 真机反馈「解包失败：无法写入模型目录」）：临时件在 `cacheDir`，模型目录是
+     * 私有 `files/local-asr` —— 两者同属应用数据分区，`renameTo` 就是原子改名（零拷贝、瞬间完成），
+     * 这也是把落点改回私有目录的直接原因。万一将来落点又跨分区，这里退化成「先复制成 .part 再在
+     * 目标目录内改名」，写完核对字节数，任何一步失败都不留半截文件。
      */
     private fun placeFile(src: File, dir: File, name: String): Boolean {
         if (!dir.isDirectory && !dir.mkdirs()) {
@@ -281,6 +293,7 @@ internal object LocalAsrDownloader {
         }
         cancelled = false
         running = true
+        startedAtMs = System.currentTimeMillis()
         lastFailure = null
         lastStage = "准备开始…"
         runCatching { logFile(context).writeText("") }
@@ -430,8 +443,8 @@ internal object LocalAsrDownloader {
 
                 if (reason == null) {
                     // ── 3. 换入模型目录 ──
-                    // 临时件在 cacheDir（内部），模型目录在外部专属目录，跨分区时 renameTo 必失败，
-                    // 由 placeFile 退回复制（详见它的注释）。
+                    // 临时件在 cacheDir、模型目录在 filesDir：同一个应用数据分区，
+                    // placeFile 走 renameTo（原子改名），失败才退回复制（详见它的注释）。
                     val dir = LocalAsrModel.dir(context)
                     dir.mkdirs()
                     val modelOk = placeFile(modelOut!!, dir, LocalAsrModel.MODEL_FILE)
@@ -464,6 +477,7 @@ internal object LocalAsrDownloader {
             } finally {
                 connection = null
                 running = false
+                startedAtMs = 0L
                 archive.delete()
                 tmpDir.deleteRecursively()
             }
