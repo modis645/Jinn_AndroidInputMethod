@@ -163,6 +163,26 @@ abstract class BufferedBatchAsrClient(
         }
     }
 
+    /** 当前缓冲的 PCM16 快照（部分识别用；返回副本，调用方可自由持有） */
+    protected fun snapshotPcm16(): ByteArray = synchronized(pcm) { pcm.toByteArray() }
+
+    /** 是否仍在收音频：部分识别的循环按它决定继续还是退出 */
+    protected fun isCapturing(): Boolean = taskId != null
+
+    /**
+     * 中途文本（「边说边出」）：与最终结果走同一个回调，`isFinal=false`。
+     * 任务已作废（取消 / 换了新一段）时静默丢弃，不许把上一段的话写进当前输入框。
+     */
+    protected fun emitPartial(id: String, text: String, seconds: Double) {
+        if (text.isEmpty()) return
+        main.post {
+            if (acceptingTask != id) return@post
+            onResultCallback(
+                RecognitionMessage(id, isFinal = false, duration = seconds, text = text),
+            )
+        }
+    }
+
     override fun endTask(): Boolean {
         val id = taskId ?: return false
         taskId = null
