@@ -75,7 +75,8 @@ class SelectionLedgerTest {
         )
         assertTrue(
             "候选选择必须记台账（按简体归一）",
-            "SelectionLedger.record(PinyinEngine.toSimplified(word), pinyin)" in view,
+            // 2026-11-16：写入改用 reading（读音兜底后的值），不再是入参 pinyin
+            "SelectionLedger.record(PinyinEngine.toSimplified(word), reading)" in view,
         )
         // 2026-11-16：追加候选的两处直记已收敛成一条路径 —— 学词统一走 learnChoice →
         // recordLedgerIfNew（词频先记、门槛判定、再落台账），这里钉住这条收敛点不要再分叉。
