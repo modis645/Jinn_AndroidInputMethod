@@ -2933,9 +2933,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
         view.layoutParams = lp
     }
 
-    /** 中文输入时是否还有未上屏内容 */
-    fun hasComposing(): Boolean = composing.isNotEmpty()
-
     /** 供 IME 调试/测试：获取某字母键的视图 */
     fun keyView(c: Char): PinyinKey? = keyViews[c]
 
@@ -5818,9 +5815,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private var centerSelectionKey: TextView? = null
     private var selectionActive = false
 
-    /** 拖选模式是否激活（由 IME 侧状态机驱动） */
-    fun isSelectionActive(): Boolean = selectionActive
-
     /**
      * IME 侧拖选状态变化时同步中心按钮视觉：
      * ●（普通）→ ◉（激活，加边框高亮），不依赖颜色作为唯一标识。
@@ -5956,9 +5950,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     // ── 键盘内剪贴板面板（占内容区，候选栏/底部栏保持）────────────
-
-    /** 当前是否处于剪贴板面板模式（字母区被替换） */
-    fun isClipboardActive(): Boolean = clipboardActive
 
     /** 是否有面板正占着字母区（剪贴板 / 图库任一） */
     fun isPanelActive(): Boolean = clipboardActive || galleryActive
