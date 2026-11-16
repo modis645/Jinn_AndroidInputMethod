@@ -5599,7 +5599,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         return box
     }
 
-（`1`~`0`）—— **只在 init 建一次**，之后只切显隐 / 落高度。
+    /**
+     * 建字母区第 0 位的固定数字行（`1`~`0`）—— **只在 init 建一次**，之后只切显隐 / 落高度。
      *
      * 为什么用 [PinyinKey] 而不是 TextView：用户要的是「三行字母向上长成四行」—— 圆角、间隙、
      * 键高、皮肤、面透明度、按压反馈必须与 qwertyuiop 那一行**逐项同源**。这些参数全部由
@@ -5719,7 +5720,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         row.visibility = if (visible) View.VISIBLE else View.GONE
     }
 
-
+    /**
+     * 就地更新「方向」按钮的文案与颜色。
      *
      * 未进入方向面板时显示「方向 / 控制」；进入后改为红色粗体「返回 / 退出控制」，
      * 让用户一眼看到退出口（该按钮此时的作用就是关闭面板）。
@@ -5759,7 +5761,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         box.contentDescription = if (active) "返回 退出快贴" else "图库 快贴"
     }
 
-
+    /**
+     * 宿主图片能力变化（IME 在每次 `onStartInputView` 后调用）：功能面板上「图库」键随之增删。
      *
      * 幂等（值没变直接返回）。这个键是**增删**，
      * 只能让候选栏重画一帧（[refreshCandidateBar] 在无候选时即渲染功能面板）。
@@ -5774,7 +5777,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
         refreshCandidateBar()
     }
 
-
+    /**
+     * 把当前皮肤与面透明度刷到方向面板的 9 个键上（与 [refreshDirectionButton] 同一套做法）。
      *
      * 面板视图懒加载且复用（[ensureDirectionPanel] 只在首次构建），键面与字色都在构建期取当时的
      * 皮肤色 —— 不重刷的话，换肤色或拖透明度后再次打开仍是上一套配色（2026-09-23 审查发现：
