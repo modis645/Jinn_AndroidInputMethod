@@ -113,7 +113,9 @@ internal object LocalAsrDownloader {
             val unpack = File(context.cacheDir, "local-asr-unpack")
             // 先救再删：解包目录里若已有完整的两件、而应用数据目录里没有，说明上次在
             // 「换入」之前就被杀掉了 —— 把它搬进 filesDir 能省掉一次 163 MB 重下。
-            if (!LocalAsrModel.isReady(context)) {
+            // 判据用 canRecognize 而不是 isReady：只缺 VAD 的时候本件与词表都齐了，
+            // 拿 isReady 会走进这里再复制一遍 239MB（而目标文件本来就好好的）
+            if (!LocalAsrModel.canRecognize(context)) {
                 val m = File(unpack, LocalAsrModel.MODEL_FILE)
                 val t = File(unpack, LocalAsrModel.TOKENS_FILE)
                 if (m.isFile && m.length() > 0L && t.isFile && t.length() > 0L) {
