@@ -27,14 +27,11 @@ class PageStyleParityTest {
     private val pages = listOf(
         "activity_favorite_symbols.xml",
         "activity_fuzzy_pinyin.xml",
-        "activity_openai_settings.xml",
         "activity_punct_output.xml",
         "activity_rare_chars.xml",
         "activity_symbol_order.xml",
         "activity_settings.xml",
         "activity_tap_sound.xml",
-        "activity_translation_settings.xml",
-        "activity_translation_source.xml",
         "activity_user_dict.xml",
         "activity_voice_settings.xml",
     )
@@ -233,9 +230,8 @@ class PageStyleParityTest {
         }
         for (token in listOf("TEXT_CLOSE")) {
             for (page in listOf("FavoriteSymbolsActivity.kt", "FuzzyPinyinActivity.kt",
-                                "OpenAiSettingsActivity.kt", "RareCharsActivity.kt",
-                                "SymbolOrderActivity.kt", "TranslationSettingsActivity.kt",
-                                "TranslationSourceActivity.kt")) {
+                                "RareCharsActivity.kt",
+                                "SymbolOrderActivity.kt")) {
                 if (token in TestSources.codeOf(TestSources.rawSourceOfShortName(page))) {
                     found += "$page 仍留着 $token"
                 }
