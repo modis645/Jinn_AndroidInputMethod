@@ -302,6 +302,13 @@ class VoiceSettingsActivity : ComponentActivity() {
             Diagnostics.i(TAG, "离线语音：本次会话已取消过下载，不再自动开始")
             return
         }
+        // 模型本件已齐、只缺分句模型：补 640KB 就够，绝不重下 163MB
+        if (LocalAsrModel.canRecognize(this) && !LocalAsrModel.hasVad(this)) {
+            Diagnostics.i(TAG, "离线语音：只缺分句模型，补下 640KB")
+            LocalAsrDownloader.ensureVad(applicationContext)
+            refreshLocalAsrStatus()
+            return
+        }
         if (LocalAsrModel.canRepair(this)) {
             Diagnostics.i(TAG, "离线语音：发现可自愈的模型残留，先修复")
             textLocalAsrStatus.text = "正在修复模型残留…"
@@ -345,6 +352,18 @@ class VoiceSettingsActivity : ComponentActivity() {
                 progressLocalAsr.progress = p
                 btnLocalAsrDownload.text = TEXT_LOCAL_ASR_CANCEL
                 btnLocalAsrDelete.visibility = View.GONE
+            }
+
+            !ready && LocalAsrModel.canRecognize(this) -> {
+                // 模型与词表在位、只缺分句模型：语音能用，正在自动补那 640KB
+                val usedMb = used / (1024 * 1024)
+                textLocalAsrStatus.text =
+                    "模型本件已就绪（占用 $usedMb MB），分句模型缺失，正在补下（约 640 KB）\n" +
+                        "补齐前长句按整段识别，句间标点会少一些\n" +
+                        LocalAsrModel.audit(this).line()
+                progressLocalAsr.visibility = View.GONE
+                btnLocalAsrDownload.text = TEXT_LOCAL_ASR_DOWNLOAD
+                btnLocalAsrDelete.visibility = View.VISIBLE
             }
 
             ready -> {
@@ -453,6 +472,13 @@ class VoiceSettingsActivity : ComponentActivity() {
      * 用 applicationContext：用户可能下载到一半就退出页面，模型仍应下完（也不把 Activity 拖住）。
      */
     private fun startLocalAsrDownload() {
+        // 只缺分句模型时补 640KB，不重下整包（用户点「下载」不该等 163MB）
+        if (LocalAsrModel.canRecognize(this) && !LocalAsrModel.hasVad(this)) {
+            Diagnostics.i(TAG, "离线语音：点击下载，但只缺分句模型 → 只补 VAD")
+            LocalAsrDownloader.ensureVad(applicationContext)
+            refreshLocalAsrStatus()
+            return
+        }
         refreshLocalAsrStatus(lastDownloadPct)
         // 看门狗：起跑就排上（自己在「不在跑」时静默退出并停止续排）
         downloadWatchKey = ""
