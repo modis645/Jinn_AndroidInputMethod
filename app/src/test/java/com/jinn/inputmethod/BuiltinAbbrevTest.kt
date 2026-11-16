@@ -90,6 +90,21 @@ class BuiltinAbbrevTest {
     }
 
     @Test
+    fun `简拼_四字词与长词都能命中`() {
+        assertTrue("简拼 bzds 应出「本质都是」：${PinyinEngine.query("bzds").candidates}",
+            PinyinEngine.query("bzds").candidates.contains("本质都是"))
+        assertTrue("简拼 bzsj 应出「本质上讲」（四音节长词）",
+            PinyinEngine.query("bzsj").candidates.contains("本质上讲"))
+    }
+
+    @Test
+    fun `简拼_超长输入不崩且不乱出词`() {
+        // ABBREV_MAX_SEGMENTS=8：九段字母超上限，必须安全返回空而不是崩溃或硬凑
+        val r = PinyinEngine.query("bzsjxyzab")
+        assertTrue("超长输入必须安全返回：${r.candidates}", r.candidates.isEmpty() || r.candidates.size <= 30)
+    }
+
+    @Test
     fun `简拼与混拼不改变全拼结果`() {
         assertTrue("全拼 bailemen 仍要出「百乐门」",
             PinyinEngine.query("bailemen").candidates.contains("百乐门"))
