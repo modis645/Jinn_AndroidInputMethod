@@ -105,8 +105,16 @@ internal class LocalSenseVoiceClient(
                 // 缓冲没长够就不再解一次：同一段音频重复解码白烧 CPU
                 if (pcm.size - lastBytes < PARTIAL_STEP_BYTES) continue
                 lastBytes = pcm.size
-                val text = runCatching { decodePcm16(pcm, withVad = false) }.getOrNull() ?: continue
-                if (text.isBlank()) continue
+                val t0 = System.currentTimeMillis()
+                val text = runCatching { decodePcm16(pcm, withVad = false) }
+                    .onFailure { Diagnostics.w(tag, "部分解码异常 ${it.javaClass.simpleName}: ${it.message}") }
+                    .getOrNull()
+                Diagnostics.i(
+                    tag,
+                    "部分解码 音频=${pcm.size / 2 / SAMPLE_RATE.toFloat()}s " +
+                        "耗时=${System.currentTimeMillis() - t0}ms 字数=${text?.length ?: -1}",
+                )
+                if (text.isNullOrBlank()) continue
                 emitPartial(taskId, text.trim(), pcm.size / 2.0 / SAMPLE_RATE)
             }
         }.apply {
@@ -325,14 +333,14 @@ internal class LocalSenseVoiceClient(
         /** 低于这个长度（约 4 秒）不值得走 VAD：切出来的句子和整段解码差别不大 */
         const val MIN_VAD_SAMPLES = 4 * SAMPLE_RATE
 
-        /** 部分识别的节拍与最小步长 */
-        const val PARTIAL_INTERVAL_MS = 900L
+        /** 部分识别的节拍与最小步长（越勤越像流式，但每次解码都吃 CPU） */
+        const val PARTIAL_INTERVAL_MS = 600L
 
-        /** 少于 0.5 秒的音频不值得解 */
-        const val PARTIAL_MIN_BYTES = 8000
+        /** 少于 0.25 秒的音频不值得解 */
+        const val PARTIAL_MIN_BYTES = 4000
 
-        /** 缓冲每多 0.6 秒才再解一次 */
-        const val PARTIAL_STEP_BYTES = 16_000
+        /** 缓冲每多 0.5 秒才再解一次 */
+        const val PARTIAL_STEP_BYTES = 8000
 
         /** 解码串行化（recognizer / stream 都非线程安全） */
         val lock = Any()
