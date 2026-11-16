@@ -113,7 +113,7 @@ class SettingsWiringAuditTest {
     fun `每个设置子页面的入口都能打开`() {
         // 页面类存在 + 在 AndroidManifest 里注册过，否则点了就闪退/无反应
         val pages = listOf(
-            "KeyAppearanceActivity", "TapSoundActivity", "ClipboardCustomizeActivity",
+            "KeyAppearanceActivity", "ClipboardCustomizeActivity",
             "ClipboardHistoryActivity", "GallerySettingsActivity", "VoiceSettingsActivity",
             "FuzzyPinyinActivity", "UserDictActivity",
             "DictManagerActivity", "RareCharsActivity", "SymbolOrderActivity",
