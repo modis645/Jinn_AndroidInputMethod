@@ -91,9 +91,6 @@ private const val LOG_SEGMENTS_KEPT = 2
     /** 导出诊断包时临时补写的设备信息（正常路径在导出结束时删除） */
     private const val DEVICE_INFO_FILE = "device-info.txt"
 
-    /** 离线模型下载日志（与 [LocalAsrDownloader.logFile] 同名；导出诊断包时一并带走） */
-    private const val LOCAL_ASR_LOG_FILE = "local-asr-download.log"
-
     /**
      * V 级（Verbose）日志是否写入文件，默认关闭。
      *
@@ -1259,20 +1256,6 @@ private const val LOG_SEGMENTS_KEPT = 2
                         zos.write(bytes)
                         zos.closeEntry()
                         written++
-                    }
-                    // 模型下载日志不在 logs 目录（它在 files/ 下，属于下载器自己的记录），
-                    // 用户反馈「下载完这条日志就看不到了」——排障时恰恰最需要它，所以并入包里。
-                    val extra = File(context.filesDir, LOCAL_ASR_LOG_FILE)
-                    if (extra.isFile) {
-                        val bytes = readForBundle(extra)
-                        if (bytes == null) {
-                            Diagnostics.w(TAG, "导出诊断包: 跳过读不出的 ${extra.name}")
-                        } else {
-                            zos.putNextEntry(java.util.zip.ZipEntry(LOCAL_ASR_LOG_FILE))
-                            zos.write(bytes)
-                            zos.closeEntry()
-                            written++
-                        }
                     }
                 }
                 // 一个条目都没写进去时**不要交出空包**（2026-10-02 修复 L-449）：此前只看 `renameTo`
