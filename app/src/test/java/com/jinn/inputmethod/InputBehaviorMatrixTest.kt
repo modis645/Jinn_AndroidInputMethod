@@ -60,6 +60,8 @@ class InputBehaviorMatrixTest {
             de
         """.trimIndent()
         PinyinEngine.loadFromTexts(chars, phrases, syllables)
+        // 线上是启动时后台建索引；单测里显式同步建一次，才覆盖「内置词简拼」这条真实路径
+        PinyinEngine.buildInitialsIndexForTest()
     }
 
     @Test
@@ -123,8 +125,9 @@ class InputBehaviorMatrixTest {
     @Test
     fun `修改拼音_退格后重新打全要能恢复出词`() {
         // 现实操作：nihao 打成 nihaoX（X 打错）→ 退 X → 候选恢复
+        // 打错一个字母：调用本身不许抛（能返回就是通过），候选按音节塌缩也不该整栏清空
         val withWrong = PinyinEngine.query("nihaoq")
-        assertTrue("打错一个字母时不该崩", withWrong.candidates.isNotEmpty() || withWrong.candidates.isEmpty())
+        assertTrue("打错字母后仍有可退的单字候选：${withWrong.candidates}", withWrong.candidates.isNotEmpty())
         val back = PinyinEngine.query("nihao")
         assertTrue("退掉错字母后必须恢复出「你好」", back.candidates.contains("你好"))
         assertEquals("首选也要恢复", "你好", back.candidates.firstOrNull())
