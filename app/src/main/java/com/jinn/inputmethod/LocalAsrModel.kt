@@ -125,11 +125,16 @@ internal object LocalAsrModel {
         val legacy = File(context.filesDir, DIR_NAME)
         val ext = runCatching { context.getExternalFilesDir(null) }
             .getOrNull()?.let { File(it, DIR_NAME) }
-        return when {
-            ext != null && ext.listFiles()?.isNotEmpty() == true -> ext
-            legacy.listFiles()?.isNotEmpty() == true -> legacy
-            else -> (ext ?: legacy).apply { mkdirs() }
-        }
+        // 优先级：**真有 model.int8.onnx 的那个目录** > 有任何文件的 > 默认外部。
+        // 只看「非空」是不够的：vad（可选件，640KB）可能先落进外部目录，此时模型本体还
+        // 在内部旧目录，按「非空优先外部」就会把一个只有 vad 的目录当成模型目录，
+        // 于是同一个模型在不同调用点被判成两个路径 —— 表现在界面上就是
+        // 「存储统计说有 240MB，语音页说未下载」。按「有没有 model」定口径就只剩一个答案。
+        if (ext != null && File(ext, MODEL_FILE).isFile) return ext
+        if (File(legacy, MODEL_FILE).isFile) return legacy
+        if (ext != null && ext.listFiles()?.isNotEmpty() == true) return ext
+        if (legacy.listFiles()?.isNotEmpty() == true) return legacy
+        return (ext ?: legacy).apply { mkdirs() }
     }
 
     /**
@@ -175,6 +180,146 @@ internal object LocalAsrModel {
             Diagnostics.w("LocalAsr", "模型迁移失败，继续使用 filesDir/local-asr")
         }
     }
+
+    /**
+     * 模型目录体检：目录里到底有什么，每个必备件各多少字节。
+     *
+     * 为什么要有它（2026-11-16 真机反馈「下载解包正常、页面显示未下载、系统存储却显示占了 240MB」）：
+     * 「已下载」和「未就绪」两个结论来自同一次判断，一旦它们互相矛盾，界面只能给出一个自相矛盾
+     * 的说法。体检结果把**事实**（文件在不在、多大）摊到明面上，界面照抄，就不再需要猜。
+     */
+    data class Audit(
+        val dirPath: String,
+        val modelBytes: Long,
+        val tokensBytes: Long,
+        val vadBytes: Long,
+        val stray: List<String>,
+    ) {
+        val ready: Boolean
+            get() = modelBytes > MODEL_MIN_BYTES && tokensBytes > 0
+
+        /** 一行给用户 / 日志看的事实 */
+        fun line(): String {
+            fun mb(b: Long) = if (b >= 1024 * 1024) "${b / (1024 * 1024)}MB" else "${b / 1024}KB"
+            val where = dirPath.substringAfterLast("/files/", dirPath)
+            return "目录 …/files/" + where +
+                "｜model " + (if (modelBytes > 0) mb(modelBytes) else "缺失") +
+                "｜tokens " + (if (tokensBytes > 0) mb(tokensBytes) else "缺失") +
+                (if (vadBytes > 0) "" else "｜vad 缺失") +
+                (if (stray.isEmpty()) "" else "｜其他 " + stray.joinToString("、"))
+        }
+    }
+
+    fun audit(context: Context): Audit {
+        val d = dir(context)
+        val files = d.listFiles().orEmpty().filter { it.isFile }
+        fun sizeOf(n: String) = files.firstOrNull { it.name == n }?.length() ?: 0L
+        val known = setOf(MODEL_FILE, TOKENS_FILE, VAD_FILE)
+        val stray = files.filter { it.name !in known }
+            .take(4)
+            .map { it.name + " " + if (it.length() >= 1024 * 1024) "${it.length() / (1024 * 1024)}MB" else "${it.length() / 1024}KB" }
+        return Audit(d.absolutePath, sizeOf(MODEL_FILE), sizeOf(TOKENS_FILE), sizeOf(VAD_FILE), stray)
+    }
+
+    private fun minBytesOf(name: String): Long = when (name) {
+        MODEL_FILE -> MODEL_MIN_BYTES
+        TOKENS_FILE -> 1L
+        else -> VAD_MIN_BYTES
+    }
+
+    /**
+     * 便宜地问一句「有没有可救的东西」（只看文件名与大小，不搬任何字节）。
+     *
+     * 用途是决定「先自愈」还是「直接重下」：不先问就重下，会把一个只差改名的 240MB 文件
+     * 再下一遍；先问一下，绝大多数残局都能在 1 秒内修好。
+     */
+    fun canRepair(context: Context): Boolean {
+        val d = dir(context)
+        if (audit(context).ready) return false
+        val names = listOf(MODEL_FILE, TOKENS_FILE)
+        val legacy = File(context.filesDir, DIR_NAME)
+        val unpack = File(context.cacheDir, "local-asr-unpack")
+        val partHit = d.listFiles().orEmpty().any { f ->
+            if (!f.isFile || !f.name.endsWith(".part")) return@any false
+            val base = f.name.removeSuffix(".part")
+            (base == MODEL_FILE || base == TOKENS_FILE) && f.length() >= minBytesOf(base)
+        }
+        val elsewhere = names.any { n ->
+            val have = File(d, n).let { it.isFile && it.length() >= minBytesOf(n) }
+            if (have) return@any false
+            val inUnpack = File(unpack, n).let { it.isFile && it.length() >= minBytesOf(n) }
+            val inLegacy = File(legacy, n).let { it.isFile && it.length() >= minBytesOf(n) }
+            inUnpack || inLegacy
+        }
+        return partHit || elsewhere
+    }
+
+    /**
+     * 自愈：把「已经躺在别处 / 只差最后一改名」的模型件补回模型目录。
+     *
+     * 覆盖三种真实见过的残局：
+     *  ① 跨分区复制被中断，目录里留下体积完整的 `xxx.part` —— 直接改名即可，不用重下；
+     *  ② 迁移到一半（模型在外部、tokens 还在 `filesDir/local-asr`）；
+     *  ③ 上次解包成功但换入前被杀，完整两件还留在 `cacheDir/local-asr-unpack`。
+     *
+     * 只在**缺件**时才动，任何时候都不会覆盖一个已就绪的模型；会搬大文件，请放在后台线程调用。
+     */
+    fun repair(context: Context): Boolean {
+        val d = dir(context)
+        if (!d.isDirectory) d.mkdirs()
+        if (audit(context).ready) return true
+        var changed = false
+
+        // ① 就地修 .part（同分区改名，毫秒级）
+        d.listFiles().orEmpty().filter { it.isFile && it.name.endsWith(".part") }.forEach { part ->
+            val base = part.name.removeSuffix(".part")
+            if (base == MODEL_FILE || base == TOKENS_FILE || base == VAD_FILE) {
+                if (part.length() >= minBytesOf(base)) {
+                    val dst = File(d, base)
+                    dst.delete()
+                    if (part.renameTo(dst)) {
+                        changed = true
+                        Diagnostics.i("LocalAsr", "自愈：$base.part 改名为 $base")
+                    }
+                } else {
+                    runCatching { part.delete() }
+                }
+            }
+        }
+
+        // ②③ 从旧内部目录 / 缓存解包目录补齐
+        val legacy = File(context.filesDir, DIR_NAME)
+        val unpack = File(context.cacheDir, "local-asr-unpack")
+        for (name in listOf(MODEL_FILE, TOKENS_FILE, VAD_FILE)) {
+            val target = File(d, name)
+            if (target.isFile && target.length() >= minBytesOf(name)) continue
+            for (src in listOf(File(unpack, name), File(legacy, name))) {
+                if (src.absolutePath == target.absolutePath) continue
+                if (!src.isFile || src.length() < minBytesOf(name)) continue
+                if (copyInto(src, target)) {
+                    changed = true
+                    Diagnostics.i("LocalAsr", "自愈：从 ${src.parentFile?.absolutePath} 补入 $name")
+                    break
+                }
+            }
+        }
+        if (changed) Diagnostics.i("LocalAsr", "自愈后 " + audit(context).line())
+        return audit(context).ready
+    }
+
+    /** 复制成 .part 再改名（跨分区也安全），失败不留件 */
+    private fun copyInto(src: File, dst: File): Boolean = runCatching {
+        val tmp = File(dst.parentFile, dst.name + ".part")
+        tmp.delete()
+        src.inputStream().use { input -> tmp.outputStream().use { output -> input.copyTo(output, 1 shl 20) } }
+        if (tmp.length() != src.length()) {
+            tmp.delete()
+            false
+        } else {
+            dst.delete()
+            if (tmp.renameTo(dst)) true else { tmp.delete(); false }
+        }
+    }.getOrDefault(false)
 
     fun modelFile(context: Context): File = File(dir(context), MODEL_FILE)
 
