@@ -1354,12 +1354,12 @@ class SettingsActivity : ComponentActivity() {
                 .append(info.freqCount).append(" 条、剪贴板 ")
                 .append(info.clipCount).append(" 条、词库 ")
                 .append(info.dictNames.size).append(" 个")
-            // 端点类设置也在「设置项」里（语音服务地址、OpenAI 兼容 Base URL / Chat Path 等）：
+            // 端点类设置也在「设置项」里（语音服务地址、自定义端点等）：
             // 「覆盖还原」会用包里的值覆盖本机，而联网请求会把**本机已有的凭据与光标前的正文**发往
             // 那个地址 —— 包若来自不可信来源，等于把 Key 交出去（2026-09-30 审查）。
             // 这里明说，不让它藏在「设置 N 项」这个计数后面。
-            append("\n\n提示：选「覆盖还原」时，包内的服务端地址与自定义端点（语音服务地址、")
-            append("OpenAI 兼容 Base URL 等）会覆盖本机 —— 请确认备份来源可信。")
+            append("\n\n提示：选「覆盖还原」时，包内的服务端地址与自定义端点（语音服务地址等）")
+            append("会覆盖本机 —— 请确认备份来源可信。")
             if (info.tooNew) append("\n\n该备份由更新版本的 App 生成，本机版本无法导入。")
             if (info.hasOversized) {
                 append("\n\n包内的 ").append(info.oversizedSections.joinToString("、"))
