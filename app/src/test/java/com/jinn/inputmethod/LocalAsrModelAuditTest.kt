@@ -57,12 +57,23 @@ class LocalAsrModelAuditTest {
     }
 
     @Test
-    fun `就绪判据是严格大于下限且 tokens 非空`() {
+    fun `就绪判据_三件齐全且模型严格大于下限`() {
         val min = LocalAsrModel.MODEL_MIN_BYTES
+        val vad = LocalAsrModel.VAD_MIN_BYTES
         assertFalse("恰好等于下限不算就绪（必须是真正完整的文件）",
-            LocalAsrModel.readyOf(min, 1))
-        assertTrue("下限加一字节即就绪", LocalAsrModel.readyOf(min + 1, 1))
-        assertFalse("tokens 为空不算就绪", LocalAsrModel.readyOf(min + 1, 0))
+            LocalAsrModel.readyOf(min, 1, vad))
+        assertTrue("三件齐了才就绪", LocalAsrModel.readyOf(min + 1, 1, vad))
+        assertFalse("tokens 为空不算就绪", LocalAsrModel.readyOf(min + 1, 0, vad))
+        assertFalse("缺 VAD 不算就绪（分句与句间标点会退化）", LocalAsrModel.readyOf(min + 1, 1, 0))
+        assertFalse("VAD 小于下限不算就绪", LocalAsrModel.readyOf(min + 1, 1, vad - 1))
+    }
+
+    @Test
+    fun `可识别判据_只要本件与词表`() {
+        val min = LocalAsrModel.MODEL_MIN_BYTES
+        assertTrue("缺 VAD 也允许识别（整段解码仍出字）", LocalAsrModel.canRecognizeOf(min + 1, 1))
+        assertFalse("缺模型不能识别", LocalAsrModel.canRecognizeOf(min, 1))
+        assertFalse("缺词表不能识别", LocalAsrModel.canRecognizeOf(min + 1, 0))
     }
 
     @Test
