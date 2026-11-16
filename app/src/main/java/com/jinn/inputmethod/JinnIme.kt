@@ -535,6 +535,10 @@ class JinnIme : InputMethodService() {
         // 语音阶段打点写进常规日志（随诊断包外发，只有阶段与毫秒数，不含识别正文）
         VoiceTrace.sink = { line -> Diagnostics.i(TAG, "VoiceTrace $line") }
         VoiceTrace.reset()
+        // 随包小件（词表 / 分句模型）开机即落到模型目录：放到后台，不拖慢键盘首帧
+        Thread { LocalAsrModel.ensureBundled(applicationContext) }
+            .apply { name = "local-asr-bundled"; isDaemon = true; priority = Thread.NORM_PRIORITY - 1 }
+            .start()
         // 半透明键盘：IME 窗口的默认格式是 OPAQUE(-1)/TRANSPARENT(-2)，合成器按「不透明窗口」
         // 处理，键面的 alpha 只会与窗口内部底色混合、透不出后面的应用（真机症状：改透明度毫无变化）。
         // 必须在窗口首次显示前把它改成 TRANSLUCENT(-3)，窗口才具备真正的 alpha 通道。
