@@ -78,26 +78,7 @@ class VoiceSelfTest(
     fun start() {
         if (client != null || finished) return
         val backend = prefs.voiceBackend
-        val denied = VoiceTestPreflight.check(
-            backend = backend,
-            appId = prefs.xfAppId,
-            apiKey = prefs.xfApiKey,
-            apiSecret = prefs.xfApiSecret,
-            host = prefs.host,
-            oaiBaseUrl = prefs.oaiBaseUrl,
-            oaiApiKey = prefs.oaiApiKey,
-            oaiModel = prefs.oaiModel,
-            aliWsUrl = prefs.aliWsUrl,
-            aliApiKey = prefs.aliApiKey,
-            aliModel = prefs.aliModel,
-            tencentSecretId = prefs.tencentSecretId,
-            tencentSecretKey = prefs.tencentSecretKey,
-            azureBaseUrl = prefs.azureBaseUrl,
-            azureApiKey = prefs.azureSpeechKey,
-            baiduApiKey = prefs.baiduSpeechApiKey,
-            baiduSecretKey = prefs.baiduSpeechSecretKey,
-            deepgramApiKey = prefs.deepgramApiKey,
-        )
+        val denied = VoiceTestPreflight.check(backend)
         if (denied != null) {
             finish(Result("", VoiceTestVerdict.of(null, denied, prefs.voiceInputEnabled)))
             return
@@ -284,103 +265,16 @@ internal object VoiceTestVerdict {
  *
  * 失败原因都不含凭据原文（只有字段名）。
  */
+/**
+ * 发起请求前的可用性校验（纯函数）：缺什么就直说，**不浪费一次必然失败的请求**。
+ *
+ * 2026-11-17 定版后只剩离线引擎一条路：除离线之外的后端取值一律直接拒，
+ * 而不是拆成一堆凭据字段逐项点名（那些字段的界面与读取方都已删除）。
+ */
 internal object VoiceTestPreflight {
 
-    const val TEXT_MISSING_XF = "讯飞凭据不全，缺少 "
-    const val TEXT_MISSING_OAI = "OpenAI 兼容配置不全，缺少 "
-    const val TEXT_MISSING_ALI = "阿里云百炼配置不全，缺少 "
-    const val TEXT_MISSING_TENCENT = "腾讯云凭据不全，缺少 "
-    const val TEXT_MISSING_AZURE = "Azure 配置不全，缺少 "
-    const val TEXT_MISSING_BAIDU = "百度凭据不全，缺少 "
-    const val TEXT_MISSING_DEEPGRAM = "Deepgram 配置不全，缺少 "
-    const val TEXT_BAD_HOST = "自建服务端地址非法"
-    const val TEXT_SEP = " / "
+    const val TEXT_ONLY_LOCAL = "本输入法只内置离线语音，无法测试在线后端"
 
-    fun check(
-        backend: String,
-        appId: String,
-        apiKey: String,
-        apiSecret: String,
-        host: String,
-        oaiBaseUrl: String = "",
-        oaiApiKey: String = "",
-        oaiModel: String = "",
-        aliWsUrl: String = "",
-        aliApiKey: String = "",
-        aliModel: String = "",
-        tencentSecretId: String = "",
-        tencentSecretKey: String = "",
-        azureBaseUrl: String = "",
-        azureApiKey: String = "",
-        baiduApiKey: String = "",
-        baiduSecretKey: String = "",
-        deepgramApiKey: String = "",
-    ): String? {
-        if (backend == VoiceBackend.OAI) return checkOai(oaiBaseUrl, oaiApiKey, oaiModel)
-        if (backend == VoiceBackend.ALI) return checkAli(aliWsUrl, aliApiKey, aliModel)
-        if (backend == VoiceBackend.TENCENT) return checkTencent(tencentSecretId, tencentSecretKey)
-        if (backend == VoiceBackend.AZURE) return checkAzure(azureBaseUrl, azureApiKey)
-        if (backend == VoiceBackend.BAIDU) return checkBaidu(baiduApiKey, baiduSecretKey)
-        if (backend == VoiceBackend.DEEPGRAM) return checkDeepgram(deepgramApiKey)
-        if (backend != VoiceBackend.XF) {
-            return if (Prefs.isValidHost(host)) null else TEXT_BAD_HOST
-        }
-        val missing = ArrayList<String>(3)
-        if (appId.isBlank()) missing += "APPID"
-        if (apiKey.isBlank()) missing += "APIKey"
-        if (apiSecret.isBlank()) missing += "APISecret"
-        return if (missing.isEmpty()) null else TEXT_MISSING_XF + missing.joinToString(TEXT_SEP)
-    }
-
-    /**
-     * OpenAI 兼容：先点名缺哪项，再交给地址策略说清为什么不能用
-     * （`http://` 公网那句提示是唯一能告诉用户「该改成 https」的载体）。
-     */
-    private fun checkOai(baseUrl: String, key: String, model: String): String? {
-        val missing = ArrayList<String>(3)
-        if (baseUrl.isBlank()) missing += "Base URL"
-        if (key.isBlank()) missing += "API Key"
-        if (model.isBlank()) missing += "模型名"
-        if (missing.isNotEmpty()) return TEXT_MISSING_OAI + missing.joinToString(TEXT_SEP)
-        return OpenAiEndpoint.normalize(baseUrl).exceptionOrNull()?.message
-    }
-
-    /** 阿里云百炼：同一顺序（缺件 → 地址策略），拒绝原因直接用 [AliEndpoint] 那句 */
-    private fun checkAli(wsUrl: String, key: String, model: String): String? {
-        val missing = ArrayList<String>(3)
-        if (wsUrl.isBlank()) missing += "WS 地址"
-        if (key.isBlank()) missing += "API Key"
-        if (model.isBlank()) missing += "模型名"
-        if (missing.isNotEmpty()) return TEXT_MISSING_ALI + missing.joinToString(TEXT_SEP)
-        return AliEndpoint.normalize(wsUrl).exceptionOrNull()?.message
-    }
-
-    /** 腾讯云：两件凭据（引擎型号有默认值，不必前置拦） */
-    private fun checkTencent(secretId: String, secretKey: String): String? {
-        val missing = ArrayList<String>(2)
-        if (secretId.isBlank()) missing += "SecretId"
-        if (secretKey.isBlank()) missing += "SecretKey"
-        return if (missing.isEmpty()) null else TEXT_MISSING_TENCENT + missing.joinToString(TEXT_SEP)
-    }
-
-    /** Azure：先点名缺件，再交给地址策略说清为什么不能用（复用 [AzureAsrEndpoint] 那句） */
-    private fun checkAzure(baseUrl: String, key: String): String? {
-        val missing = ArrayList<String>(2)
-        if (baseUrl.isBlank()) missing += "Base URL"
-        if (key.isBlank()) missing += "API Key"
-        if (missing.isNotEmpty()) return TEXT_MISSING_AZURE + missing.joinToString(TEXT_SEP)
-        return AzureAsrEndpoint.normalize(baseUrl).exceptionOrNull()?.message
-    }
-
-    /** 百度：两件凭据（dev_pid 有默认值，不必前置拦；填错由服务端 3300 说清） */
-    private fun checkBaidu(apiKey: String, secretKey: String): String? {
-        val missing = ArrayList<String>(2)
-        if (apiKey.isBlank()) missing += "API Key"
-        if (secretKey.isBlank()) missing += "Secret Key"
-        return if (missing.isEmpty()) null else TEXT_MISSING_BAIDU + missing.joinToString(TEXT_SEP)
-    }
-
-    /** Deepgram：只有 Key 是必需（模型 / 语言码有默认值，保存页才拦空值） */
-    private fun checkDeepgram(apiKey: String): String? =
-        if (apiKey.isBlank()) TEXT_MISSING_DEEPGRAM + "API Key" else null
+    fun check(backend: String): String? =
+        if (backend == VoiceBackend.LOCAL) null else TEXT_ONLY_LOCAL
 }
