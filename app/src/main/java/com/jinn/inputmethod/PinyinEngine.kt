@@ -1984,6 +1984,29 @@ object PinyinEngine {
     /** 同一个词累计被选中多少次才收录（不看是否连续、不看用哪种拼法） */
     private const val ADMIT_TOTAL_PICKS = 6
 
+    /**
+     * 词没有可查读音时，用**用户实际敲的那串**当读音（自造词专用兜底）。
+     *
+     * `truePinyinOf()` 对「词库里根本不存在」的多字词返回 null，于是这类自造词在台账里
+     * 没有读音、也就永远进不了候选 —— 用户看到的就是「收录了但打不出来」。
+     * 只有当键入串能被切成「与词面字数相同」的音节时才认（`liuzhiwu` → `liu zhi wu`），
+     * 简拼（`lzw` 切不干净）或字数不匹配时返回 null，宁可没读音也不给错读音。
+     */
+    fun readingFromTyped(word: String, typedKey: String): String? {
+        if (word.isEmpty() || typedKey.isEmpty()) return null
+        val segs = splitSyllables(typedKey.lowercase(java.util.Locale.ROOT)) ?: return null
+        if (segs.size != word.length) return null
+        return segs.joinToString(" ")
+    }
+
+    /** 测试注入：清空自造词、门槛计数与简拼缓存（用例之间不得互相污染） */
+    internal fun clearUserWordsForTest() {
+        userWords.clear()
+        pickTotals.clear()
+        pickStreaks.clear()
+        synchronized(abbrevCache) { abbrevCache.clear() }
+    }
+
     private fun addUserWord(word: String, pinyin: String): Boolean {
         if (word.isEmpty() || pinyin.isEmpty()) return false
         val syllables = pinyin.split(' ').filter { it.isNotBlank() }
