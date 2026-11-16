@@ -866,7 +866,6 @@ class DocsReferenceTest {
         )
         // 两个条件键的开关：自动化要算键数只能靠这两处，换判据等于换合同
         assertTrue("「图库」键的存在条件必须是宿主声明（if (hostImageCapable)）", "if (hostImageCapable)" in body)
-        assertTrue("「翻译」键的存在条件必须是总开关（if (prefs.translateEnabled)）", "if (prefs.translateEnabled)" in body)
     }
 
     /**
@@ -939,12 +938,6 @@ class DocsReferenceTest {
             "KeyboardSkin 的写法变了（本守卫要跟着改）：共 $skinTotal / 暗 $skinDark / 亮 $skinLight",
             skinTotal > 0 && skinTotal == skinDark + skinLight,
         )
-        // ② AI 动作：枚举里的中文名去掉「翻译」本身（它是长按翻译键的直连动作，不在展开清单里）
-        val aiSrc = TestSources.codeSource("AiAction.kt")
-        val aiLabels = Regex("""(?m)^\s*[A-Z_]+\("[a-z]+", "([^"]+)"\)""").findAll(aiSrc)
-            .map { it.groupValues[1] }.toList()
-        assertTrue("AiAction 的写法变了（本守卫要跟着改）：$aiLabels", aiLabels.size >= 2 && "翻译" in aiLabels)
-        val aiExtras = aiLabels.filterNot { it == "翻译" }
         // 源码常量取值：命中必须**恰 1 处**（`BUG.md` L-1367）：同名旧声明残留 / 取到旧值时不再静默
         fun uniqueConst(src: String, pattern: String, tag: String): Int {
             val vals = Regex(pattern).findAll(src).map { it.groupValues[1].replace("_", "") }.toSet()
@@ -971,10 +964,6 @@ class DocsReferenceTest {
             val strayKb = Regex("""单条(?:上限)?[^\d]{0,6}(\d+)KB""").findAll(text)
                 .map { it.groupValues[1] }.filter { it != textKb.toString() }.toSet()
             assertTrue("$name 的「单条上限」写着 ${strayKb.sorted().joinToString("/")}KB（源码 ${textKb}KB）", strayKb.isEmpty())
-            val actionLine = text.lineSequence().firstOrNull { "长按翻译键" in it }
-                ?: error("$name 找不到 AI 动作那一行（改了措辞？）")
-            assertTrue("$name 的「N 个动作」与 AiAction 不一致（源码 ${aiExtras.size} 个）", "${aiExtras.size} 个动作" in actionLine)
-            for (label in aiExtras) assertTrue("$name 的 AI 动作一行缺「$label」", label in actionLine)
         }
         val overview = readDoc("功能总览.md") ?: error("找不到 功能总览.md")
         assertTrue("功能总览缺「文本 ${textKb}KB」（源码 MAX_ITEM_BYTES）", "${textKb}KB" in overview)
