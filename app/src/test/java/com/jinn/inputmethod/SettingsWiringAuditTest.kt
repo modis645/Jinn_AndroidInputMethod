@@ -32,7 +32,10 @@ class SettingsWiringAuditTest {
         get() = TestSources.codeOf(TestSources.rawSourceOfShortName("SettingsActivity.kt"))
 
     private val settingsLayout: String
-        get() = TestSources.rawSource("app/src/main/res/layout/activity_settings.xml")
+        get() = TestSources.rawSource(
+            "src/main/res/layout/activity_settings.xml",
+            "app/src/main/res/layout/activity_settings.xml",
+        )
 
     /** 设置属性白名单：都是「只有备份/导入在用」或已停用的在线凭据，功能上不驱动 UI。 */
     private val legacyProps = setOf(
@@ -97,7 +100,12 @@ class SettingsWiringAuditTest {
             "DictManagerActivity", "RareCharsActivity", "SymbolOrderActivity",
             "FavoriteSymbolsActivity", "StorageUsageActivity", "FloatingKeyboardActivity",
         )
-        val manifest = TestSources.codeOf(TestSources.rawSource("app/src/main/AndroidManifest.xml"))
+        val manifest = TestSources.codeOf(
+            TestSources.rawSource(
+                "src/main/AndroidManifest.xml",
+                "app/src/main/AndroidManifest.xml",
+            ),
+        )
         val missingFile = pages.filter { p ->
             !File(srcDir, "$p.kt").isFile
         }
