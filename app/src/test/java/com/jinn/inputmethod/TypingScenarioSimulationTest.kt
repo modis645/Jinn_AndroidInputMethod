@@ -75,14 +75,26 @@ class TypingScenarioSimulationTest {
     }
 
     @Test
-    fun `上报2026_11_16_全拼六次收录后首字母必须能打出`() {
+    fun `上报2026_11_16_累计六次收录后首字母必须能打出`() {
         // 用户原话：「全拼输入词组 6 次，用户词库收录，但是首字母无法打出该词组」
-        repeat(5) {
-            assertFalse("第 ${it + 1} 次不该收录", pickLikeUser("刘志武", "liuzhiwu"))
+        // 走的是「累计 6 次」那条门槛：中间穿插别的词，连击断了但累计还在涨
+        // 12 次选择里「刘志武」占 6 次，另外三词各 2 次（都够不到任何一条门槛，
+        // 顺带验证「达标的是目标词、不会被陪练词误收」）
+        val fillers = listOf("我看", "你好", "张三")
+        var admitted = false
+        var fillerIdx = 0
+        repeat(12) { i ->
+            if (i % 2 == 0) {
+                admitted = pickLikeUser("刘志武", "liuzhiwu") || admitted
+            } else {
+                assertFalse(
+                    "陪练词 ${fillers[fillerIdx % fillers.size]} 不该被收录",
+                    pickLikeUser(fillers[fillerIdx++ % fillers.size], "liuzhiwu"),
+                )
+            }
         }
-        assertTrue("第 6 次累计 6 次，必须收录", pickLikeUser("刘志武", "liuzhiwu"))
+        assertTrue("刘志武 累计满 6 次必须收录", admitted)
 
-        // 全拼：本来就走 userWords[raw]
         assertTrue(
             "全拼 liuzhiwu 必须出「刘志武」",
             PinyinEngine.query("liuzhiwu").candidates.contains("刘志武"),
