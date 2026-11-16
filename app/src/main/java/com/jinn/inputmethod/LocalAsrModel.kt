@@ -135,43 +135,22 @@ internal object LocalAsrModel {
         }
     }
 
-    /** 私有目录（历史落点 / 外置不可用时的退路）；只用于搬迁与自愈，不做"哪个有内容用哪个"的判断 */
+    /** 私有目录（旧版落点）；只用于清理残留与自愈取件，不做"哪个有内容用哪个"的判断 */
     private fun privateDir(context: Context): File = File(context.filesDir, DIR_NAME)
 
     /**
-     * 收尾：把历史版本留在私有 `files/local-asr` 里的模型搬到外部专属目录（幂等，可在任意线程调用）。
+     * 清掉历史落点：私有 `files/local-asr`（旧版曾把模型放这里）。
      *
-     * 只做「搬」，不做下载；外部已就绪时私有那份直接删掉，不占双份空间。
-     * 搬动用 [copyInto]（先写 `.part` 再改名），中途被杀时外部目录仍是完整件，
-     * 不会把模型判成丢失；搬成功才删私有目录。
+     * 按「全新安装」的口径，这里**不做搬迁** —— 模型只有一个家（见 [dir]），装完自动下、
+     * 下完解包换入即可。旧目录只是过渡残留，占着 240MB 会让系统存储数字对不上，所以在
+     * 当前目录**已就绪**时直接删掉；还没就绪就一概不动，绝不让设备失去唯一一份。
      */
-    fun migrateIfNeeded(context: Context) {
-        val target = dir(context)
-        val src = privateDir(context)
-        if (src.absolutePath == target.absolutePath) return
-        val srcFiles = src.listFiles().orEmpty().filter { it.isFile && it.length() > 0L }
-        if (srcFiles.isEmpty()) {
-            runCatching { src.deleteRecursively() }
-            return
-        }
-        if (audit(context).ready) {
-            runCatching { src.deleteRecursively() }
-            Diagnostics.i("LocalAsr", "外部目录已就绪，清掉私有历史残留")
-            return
-        }
-        var all = true
-        for (f in srcFiles) {
-            if (!copyInto(f, File(target, f.name))) {
-                all = false
-                break
-            }
-        }
-        if (all) {
-            runCatching { src.deleteRecursively() }
-            Diagnostics.i("LocalAsr", "已把私有目录里的历史模型搬到外部专属目录（" + audit(context).line() + "）")
-        } else {
-            Diagnostics.w("LocalAsr", "历史模型搬迁失败，保留原样（不影响已有内容）")
-        }
+    fun cleanLegacy(context: Context) {
+        val legacy = privateDir(context)
+        if (legacy.absolutePath == dir(context).absolutePath) return
+        if (!audit(context).ready) return
+        runCatching { legacy.deleteRecursively() }
+        Diagnostics.i("LocalAsr", "已清掉私有历史目录（模型只在 " + dir(context).absolutePath + "）")
     }
 
     /**
