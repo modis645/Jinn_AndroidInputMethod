@@ -384,6 +384,11 @@ class JinnIme : InputMethodService() {
             asr?.cancelTask()
         }
         Diagnostics.w(TAG, "识别超时: ${RECOGNIZE_TIMEOUT_MS}ms 内未收到最终结果，复位状态条")
+        // 超时 = 不再等这一段了：先把「边说边出」留下的组合态撤掉。
+        // 不清就会在输入框里永久留一段带下划线的字（用户看到的就是「文字不上屏、还是输入状态」）。
+        // 离线后端不做作废：晚到的正文仍可上屏，但那时是新一次 commitText，不会和这里打架。
+        clearVoiceComposing()
+        echoVoiceText(null)
         setHint(getString(R.string.hint_not_connected))
     }
 
@@ -4285,6 +4290,7 @@ class JinnIme : InputMethodService() {
         // 预编辑已固定关闭（识别完成一次性提交），不必再收尾组合态
 
         mode = target
+        voiceStartedAt = android.os.SystemClock.elapsedRealtime()
         // 连续录音的键面由 IME 通报（视图不自己猜）：重建后也能补上「结束 m:ss」这一态
         if (target == Mode.TOGGLE) {
             pinyinKeyboard?.setVoiceToggleState(true)
@@ -4347,8 +4353,15 @@ class JinnIme : InputMethodService() {
                 // 与归属快照（结果回来时判「输入框是否已经换了应用」）
                 awaitingResult = true
                 voiceResultPackage = currentInputEditorInfo?.packageName
+                // 本地解码比实时慢：固定 60 秒会把「说完一大段」误判成超时，状态条先回「未连接」
+                val audioMs = (android.os.SystemClock.elapsedRealtime() - voiceStartedAt).coerceAtLeast(0L)
+                val waitMs = VoiceTiming.recognizeTimeoutMs(
+                    audioMs,
+                    VoiceBackend.isOnline(prefs.voiceBackend),
+                )
+                Diagnostics.i(TAG, "stopRecording: 等结果上限 ${waitMs}ms（音频 ${audioMs}ms）")
                 ui.removeCallbacks(recognizeTimeout)
-                ui.postDelayed(recognizeTimeout, RECOGNIZE_TIMEOUT_MS)
+                ui.postDelayed(recognizeTimeout, waitMs)
             }
         } else {
             asr?.cancelTask()
@@ -4463,6 +4476,9 @@ class JinnIme : InputMethodService() {
     /** 「边说边出」的组合态是否已经写过（取消 / 丢弃时要撤掉，否则宿主里留一段半截字） */
     private var voiceComposingShown = false
 
+    /** 本轮录音起始的单调时刻：只用来给「等结果」定时限，不参与任何用户可见文案 */
+    private var voiceStartedAt = 0L
+
     /**
      * 把中途识别文本放进**组合态**：宿主里立刻看得见字，但不算上屏。
      *
@@ -4536,11 +4552,26 @@ class JinnIme : InputMethodService() {
         voiceComposingShown = false
         // 只记字数不记正文：日志文件落在外部存储，且会随「导出诊断包」整体外发
         Diagnostics.i(TAG, "handleResult: 最终结果 共${message.text.length}字")
+        if (text.isBlank()) {
+            // 识别为空（没人说话 / 只录到噪声）：不能只 commitText("") ——
+            // 不少宿主会忽略空串提交，组合区就留在那儿，看着像「还在输入」
+            clearVoiceComposing()
+            echoVoiceText(null)
+            awaitingResult = false
+            voiceResultPackage = null
+            ui.removeCallbacks(recognizeTimeout)
+            setHint(getString(R.string.hint_empty))
+            return
+        }
         // 阶段汇总：一眼看出「慢」是在建识别器、等第一句，还是上屏这一步
         VoiceTrace.mark("committed", "chars=${text.length}")
         Diagnostics.i(TAG, "语音时延 " + VoiceTrace.summary())
         connection.commitText(text, 1)
-        setHint(getString(if (text.isBlank()) R.string.hint_empty else R.string.hint_done))
+        // commitText 会替换组合区，但部分宿主（尤其国产 ROM 的聊天框）仍保留组合下划线；
+        // 显式 finish 一次，确保字是「已上屏」状态而不是「还在输入」
+        runCatching { connection.finishComposingText() }
+        voiceComposingShown = false
+        setHint(getString(R.string.hint_done))
         // 自动续说：会话还在、且没有新的一轮在录（用户可能已自己点开），就接着录下一句。
         // 一次性提交完成后才接（避免与 commitText 抢同一个组合态）；键盘已收起就收会话。
         if (dictationSession) {
@@ -5224,7 +5255,8 @@ class JinnIme : InputMethodService() {
          * 取 60s：3 分钟上限的长语音，服务端识别十几秒属正常量级，留足余量再判超时；
          * 超时只复位状态条，不会影响后续听写。
          */
-        const val RECOGNIZE_TIMEOUT_MS = 60_000L
+        /** 等待最终结果的基线时限；本地后端按音频长度放宽，见 [VoiceTiming.recognizeTimeoutMs] */
+    const val RECOGNIZE_TIMEOUT_MS = VoiceTiming.BASE_TIMEOUT_MS
 
         const val BACKSPACE_DELAY_MS = 400L
         const val BACKSPACE_REPEAT_MS = 55L
