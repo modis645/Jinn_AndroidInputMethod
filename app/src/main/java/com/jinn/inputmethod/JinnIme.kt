@@ -738,6 +738,15 @@ class JinnIme : InputMethodService() {
                 // 再扫一次下载残留 —— 迁移失败会自动退回原目录，不影响可用性。
                 LocalAsrModel.migrateIfNeeded(applicationContext)
                 LocalAsrDownloader.sweepCache(applicationContext)
+                // 自愈（2026-11-16）：残局里模型件常已经躺在别处（缓存解包目录 / 旧内部目录，
+                // 或只差最后一次改名）。先修，修好了就不用再拉 163MB；修不动才走下载。
+                if (!LocalAsrModel.isReady(applicationContext) &&
+                    LocalAsrModel.canRepair(applicationContext)
+                ) {
+                    val fixed = runCatching { LocalAsrModel.repair(applicationContext) }
+                        .getOrDefault(false)
+                    Diagnostics.i(TAG, "离线语音: 进程启动自检，自愈 fixed=$fixed ${LocalAsrModel.audit(applicationContext).line()}")
+                }
                 if (LocalAsrModel.isReady(applicationContext)) return@runCatching
                 if (LocalAsrDownloader.isRunning()) return@runCatching
                 Diagnostics.i(TAG, "离线语音: 进程启动，自动开始下载模型")
