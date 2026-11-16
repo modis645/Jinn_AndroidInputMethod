@@ -48,12 +48,13 @@ class LocalAsrModelRepairTest {
     private fun modelBytes() = LocalAsrModel.MODEL_MIN_BYTES + 1
 
     @Test
-    fun `体积完整的part可救_改名即就绪`() {
+    fun `体积完整的part可救_改名后即就绪`() {
         sparse(File(dir, LocalAsrModel.MODEL_FILE + ".part"), modelBytes())
         smallTokens()
+        sparse(File(dir, LocalAsrModel.VAD_FILE), vadBytes())
         val can = LocalAsrModel.canRepairIn(dir, unpack, ready = false)
         assertTrue("完整的 .part 必须判为可救（省掉一次 163MB 重下）", can)
-        assertTrue("改名后应就绪", LocalAsrModel.repairIn(dir, unpack))
+        assertTrue("三件齐了就绪", LocalAsrModel.repairIn(dir, unpack))
         assertTrue("改名后 model 必须在位", File(dir, LocalAsrModel.MODEL_FILE).length() > LocalAsrModel.MODEL_MIN_BYTES)
         assertFalse("part 名不该留下", File(dir, LocalAsrModel.MODEL_FILE + ".part").exists())
     }
@@ -71,6 +72,7 @@ class LocalAsrModelRepairTest {
     fun `解包目录完整件可救_自愈会补入`() {
         sparse(File(unpack, LocalAsrModel.MODEL_FILE), modelBytes())
         smallTokens(File(unpack, LocalAsrModel.TOKENS_FILE))
+        sparse(File(unpack, LocalAsrModel.VAD_FILE), vadBytes())
         assertTrue("解包目录有完整件就该判可救", LocalAsrModel.canRepairIn(dir, unpack, ready = false))
         assertTrue(LocalAsrModel.repairIn(dir, unpack))
         assertTrue("model 必须补进模型目录", File(dir, LocalAsrModel.MODEL_FILE).isFile)
@@ -81,6 +83,7 @@ class LocalAsrModelRepairTest {
     fun `已就绪时绝不判可救也不动文件`() {
         sparse(File(dir, LocalAsrModel.MODEL_FILE), modelBytes())
         smallTokens()
+        sparse(File(dir, LocalAsrModel.VAD_FILE), vadBytes())
         val before = File(dir, LocalAsrModel.MODEL_FILE).lastModified()
         assertFalse("就绪后不该再判可救", LocalAsrModel.canRepairIn(dir, unpack, ready = true))
         assertTrue("已就绪直接返回真", LocalAsrModel.repairIn(dir, unpack))
@@ -94,12 +97,18 @@ class LocalAsrModelRepairTest {
     }
 
     @Test
-    fun `自愈会补VAD但VAD缺失不影响就绪`() {
+    fun `缺VAD只算半就绪_自愈会把它补齐`() {
         sparse(File(dir, LocalAsrModel.MODEL_FILE), modelBytes())
         smallTokens()
-        assertTrue("没有 VAD 也算就绪（VAD 是增强件）", LocalAsrModel.auditDir(dir).ready)
+        // 三件齐全才算就绪：缺 VAD 时页面必须说「未就绪」，否则用户会以为分句与标点正常
+        assertFalse("缺 VAD 不算就绪", LocalAsrModel.auditDir(dir).ready)
+        assertTrue("但语音依然可用", LocalAsrModel.canRecognizeOf(
+            File(dir, LocalAsrModel.MODEL_FILE).length(),
+            File(dir, LocalAsrModel.TOKENS_FILE).length(),
+        ))
         sparse(File(unpack, LocalAsrModel.VAD_FILE), vadBytes())
-        LocalAsrModel.repairIn(dir, unpack)
-        assertTrue("VAD 在解包目录时也要补进来", File(dir, LocalAsrModel.VAD_FILE).length() > LocalAsrModel.VAD_MIN_BYTES)
+        assertTrue("补齐 VAD 后才算就绪", LocalAsrModel.repairIn(dir, unpack))
+        assertTrue("VAD 必须从解包目录补进来",
+            File(dir, LocalAsrModel.VAD_FILE).length() > LocalAsrModel.VAD_MIN_BYTES)
     }
 }
