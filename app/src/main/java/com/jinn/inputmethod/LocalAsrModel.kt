@@ -149,8 +149,9 @@ internal object LocalAsrModel {
         val vadBytes: Long,
         val stray: List<String>,
     ) {
+        /** 三件齐全才算就绪（缺 VAD 时照样能识别，但分句与句间标点会退化） */
         val ready: Boolean
-            get() = readyOf(modelBytes, tokensBytes)
+            get() = readyOf(modelBytes, tokensBytes, vadBytes)
 
         /** 一行给用户 / 日志看的事实 */
         fun line(): String {
@@ -180,8 +181,16 @@ internal object LocalAsrModel {
         return Audit(d.absolutePath, sizeOf(MODEL_FILE), sizeOf(TOKENS_FILE), sizeOf(VAD_FILE), stray)
     }
 
-    /** 「算不算就绪」的唯一判据：模型要**严格大于**下限，tokens 只要求非空 */
-    fun readyOf(modelBytes: Long, tokensBytes: Long): Boolean =
+    /**
+     * 「算不算就绪」的唯一判据：三件模型都在 —— 模型要**严格大于**下限、tokens 非空、
+     * VAD 不小于下限。缺任何一件都不算就绪（缺 VAD 时语音仍能跑，只是分句没了，
+     * 所以另设 [canRecognizeOf] 给识别链路用）。
+     */
+    fun readyOf(modelBytes: Long, tokensBytes: Long, vadBytes: Long): Boolean =
+        canRecognizeOf(modelBytes, tokensBytes) && vadBytes >= VAD_MIN_BYTES
+
+    /** 「现在能不能识别」：只要求本件与词表（VAD 缺失只会让分句退化，不该拦下语音） */
+    fun canRecognizeOf(modelBytes: Long, tokensBytes: Long): Boolean =
         modelBytes > MODEL_MIN_BYTES && tokensBytes > 0
 
     private fun minBytesOf(name: String): Long = when (name) {
@@ -304,13 +313,17 @@ internal object LocalAsrModel {
 
     fun vadFile(context: Context): File = File(dir(context), VAD_FILE)
 
-    /** VAD 是可选件：缺了降级为「整段解码」，所以不参与 [isReady] 判定 */
+    /** VAD 在不在（缺它时会话降级为整段解码，分句与句间标点消失） */
     fun hasVad(context: Context): Boolean = vadFile(context).let { it.isFile && it.length() > VAD_MIN_BYTES }
 
-    /** 两件文件都在才算就绪（只看存在性，完整性由下载端的 sha256 / 大小校验保证） */
-    fun isReady(context: Context): Boolean =
-        modelFile(context).isFile && modelFile(context).length() > MODEL_MIN_BYTES &&
-            tokensFile(context).isFile && tokensFile(context).length() > 0
+    /** 「现在能不能识别」：本件 + 词表在位即可，VAD 缺失只降级、不拦语音 */
+    fun canRecognize(context: Context): Boolean {
+        val a = audit(context)
+        return canRecognizeOf(a.modelBytes, a.tokensBytes)
+    }
+
+    /** 就绪 = 三件齐全（判据只留 [readyOf] 一处，避免这里与体检行给出互相矛盾的说法） */
+    fun isReady(context: Context): Boolean = audit(context).ready
 
     /** 已占用的字节数（设置页「存储占用」与删除入口用） */
     fun usedBytes(context: Context): Long = dir(context).listFiles()?.sumOf { it.length() } ?: 0L
@@ -344,6 +357,7 @@ internal object LocalAsrModel {
     fun problem(context: Context): String? {
         if (!modelFile(context).isFile) return "离线模型未就绪：缺少 model.int8.onnx"
         if (!tokensFile(context).isFile) return "离线模型未就绪：缺少 tokens.txt"
+        // VAD 缺失不拦语音：整段解码仍能出字，只是没有分句与句间标点
         return null
     }
 }
