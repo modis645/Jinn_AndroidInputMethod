@@ -135,24 +135,6 @@ internal object LocalAsrModel {
         }
     }
 
-    /** 私有目录（旧版落点）；只用于清理残留与自愈取件，不做"哪个有内容用哪个"的判断 */
-    private fun privateDir(context: Context): File = File(context.filesDir, DIR_NAME)
-
-    /**
-     * 清掉历史落点：私有 `files/local-asr`（旧版曾把模型放这里）。
-     *
-     * 按「全新安装」的口径，这里**不做搬迁** —— 模型只有一个家（见 [dir]），装完自动下、
-     * 下完解包换入即可。旧目录只是过渡残留，占着 240MB 会让系统存储数字对不上，所以在
-     * 当前目录**已就绪**时直接删掉；还没就绪就一概不动，绝不让设备失去唯一一份。
-     */
-    fun cleanLegacy(context: Context) {
-        val legacy = privateDir(context)
-        if (legacy.absolutePath == dir(context).absolutePath) return
-        if (!audit(context).ready) return
-        runCatching { legacy.deleteRecursively() }
-        Diagnostics.i("LocalAsr", "已清掉私有历史目录（模型只在 " + dir(context).absolutePath + "）")
-    }
-
     /**
      * 模型目录体检：目录里到底有什么，每个必备件各多少字节。
      *
@@ -209,7 +191,6 @@ internal object LocalAsrModel {
         val d = dir(context)
         if (audit(context).ready) return false
         val names = listOf(MODEL_FILE, TOKENS_FILE)
-        val ext = privateDir(context)
         val unpack = File(context.cacheDir, "local-asr-unpack")
         val partHit = d.listFiles().orEmpty().any { f ->
             if (!f.isFile || !f.name.endsWith(".part")) return@any false
@@ -220,8 +201,7 @@ internal object LocalAsrModel {
             val have = File(d, n).let { it.isFile && it.length() >= minBytesOf(n) }
             if (have) return@any false
             val inUnpack = File(unpack, n).let { it.isFile && it.length() >= minBytesOf(n) }
-            val inExt = ext?.let { e -> File(e, n).let { it.isFile && it.length() >= minBytesOf(n) } } == true
-            inUnpack || inExt
+            inUnpack
         }
         return partHit || elsewhere
     }
@@ -229,10 +209,9 @@ internal object LocalAsrModel {
     /**
      * 自愈：把「已经躺在别处 / 只差最后一改名」的模型件补回模型目录。
      *
-     * 覆盖三种真实见过的残局：
+     * 覆盖两种真实见过的残局（按「全新安装」口径，不再考虑任何历史落点）：
      *  ① 复制被中断，目录里留下体积完整的 `xxx.part` —— 直接改名即可，不用重下；
-     *  ② 历史版本把模型留在了外部专属目录（旧布局），私有目录里缺件；
-     *  ③ 上次解包成功但换入前被杀，完整两件还留在 `cacheDir/local-asr-unpack`。
+     *  ② 上次解包成功但换入前被杀，完整两件还留在 `cacheDir/local-asr-unpack`。
      *
      * 只在**缺件**时才动，任何时候都不会覆盖一个已就绪的模型；会搬大文件，请放在后台线程调用。
      */
@@ -259,13 +238,12 @@ internal object LocalAsrModel {
             }
         }
 
-        // ②③ 从私有历史目录 / 缓存解包目录补齐
-        val ext = privateDir(context)
+        // ②③ 从缓存解包目录补齐
         val unpack = File(context.cacheDir, "local-asr-unpack")
         for (name in listOf(MODEL_FILE, TOKENS_FILE, VAD_FILE)) {
             val target = File(d, name)
             if (target.isFile && target.length() >= minBytesOf(name)) continue
-            for (src in listOfNotNull(File(unpack, name), ext?.let { File(it, name) })) {
+            for (src in listOf(File(unpack, name))) {
                 if (src.absolutePath == target.absolutePath) continue
                 if (!src.isFile || src.length() < minBytesOf(name)) continue
                 if (copyInto(src, target)) {
