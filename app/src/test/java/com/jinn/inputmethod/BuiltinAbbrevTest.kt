@@ -53,6 +53,8 @@ class BuiltinAbbrevTest {
             asset("pinyin_syllables.txt"),
             asset("common_chars.txt"),
         )
+        // 线上是启动时后台建首字母索引，按键路径不等它；测试里同步建一次
+        PinyinEngine.buildInitialsIndexForTest()
     }
 
     @Test
