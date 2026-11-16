@@ -309,7 +309,8 @@ internal class LocalSenseVoiceClient(
         return out
     }
 
-    private companion object {
+    // 需求：IME 启动时要调 warmup / recognizerFor，所以 companion 不能是 private
+    internal companion object {
         const val SAMPLE_RATE = 16_000
 
         /** 段首无条件回补的帧数（0.3s × 100 帧/秒） */
