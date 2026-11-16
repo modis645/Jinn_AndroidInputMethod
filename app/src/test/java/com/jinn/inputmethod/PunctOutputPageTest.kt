@@ -15,14 +15,17 @@ import java.io.File
 class PunctOutputPageTest {
 
     @Test
-    fun `首页入口是按钮且打开标点输出页`() {
+    fun `首页不再有标点输出页入口`() {
+        // 2026-11-16：作者把「空格左右标点」入口从设置页删掉（标点改为随句子上屏自动带出），
+        // 页面类还在（死代码，最终定版统一清理），但首页**不许再有任何入口** ——
+        // 否则会出现「点进去是一个不再维护的页面」这种半死状态。
         val code = TestSources.codeSource("SettingsActivity.kt")
-        assertTrue(
-            "首页「空格左右按钮」必须是按钮入口",
-            "findViewById<Button>(R.id.btn_space_cursor)" in code,
+        assertFalse(
+            "首页不得再有「空格左右标点」入口",
+            "btn_space_cursor" in code,
         )
-        assertTrue(
-            "该按钮必须打开 PunctOutputActivity",
+        assertFalse(
+            "首页不得再打开 PunctOutputActivity",
             "PunctOutputActivity::class.java" in code,
         )
         assertFalse(
@@ -92,15 +95,17 @@ class PunctOutputPageTest {
     }
 
     @Test
-    fun `标点页已在清单注册`() {
+    fun `标点输出页已从清单注销`() {
+        // 2026-11-16 起标点输出页没有入口，清单里同步注销 —— 未注册的 Activity 即使被别的
+        // 代码 startActivity 也会抛 ActivityNotFoundException，这条断言正好钉住「别复活半套」。
         val manifest = TestSources.codeOf(
             listOf(
                 File("src/main/AndroidManifest.xml"),
                 File("app/src/main/AndroidManifest.xml"),
             ).first { it.isFile }.readText(),
         )
-        assertTrue(
-            "AndroidManifest 未注册 PunctOutputActivity",
+        assertFalse(
+            "AndroidManifest 不得再注册 PunctOutputActivity",
             "android:name=\".PunctOutputActivity\"" in manifest,
         )
     }
