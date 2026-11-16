@@ -922,6 +922,8 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private val btnVoiceLong: View
     private val btnVoiceLabel: TextView?
     private val btnVoiceLevel: View?
+    /** 空格键里的那条电平（长按空格说话时用户的视线在这把键上） */
+    private val btnSpaceLevel: View?
 
     /**
      * 分号键（第三行 m 右侧）。
@@ -1347,6 +1349,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         btnVoiceLong = root.findViewById(R.id.key_voice_long)
         btnVoiceLabel = root.findViewById(R.id.key_voice_label)
         btnVoiceLevel = root.findViewById(R.id.key_voice_level)
+        btnSpaceLevel = root.findViewById(R.id.key_space_level)
         keySemicolon = root.findViewById(R.id.key_semicolon)
         keySemicolon.label = SEMICOLON_KEY.toString()
         // 无障碍激活：与字母键同款；触摸路径的可见性 / 命中判定由触摸监听自己负责，
@@ -5110,40 +5113,48 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 「长按空格 / 长语音都没有电平波」）。
      */
     private fun setVoiceLevel(level: Float) {
-        val bar = btnVoiceLevel ?: return
-        val host = btnVoiceLong.width
-        if (host <= 0) {
-            // 视图刚重建 / 首次显示时还没测量完：host 宽是 0，照原样 return 会让电平条
-            // 整段录音都不出现（电平常在 10Hz 打进来，而下一次回调前往往已经安静了）。
-            // 补一帧重试，最多一轮，避免死循环。
-            if (!voiceLevelRetryPending) {
-                voiceLevelRetryPending = true
-                btnVoiceLong.post {
-                    voiceLevelRetryPending = false
-                    setVoiceLevel(lastVoiceLevel)
-                }
-            }
-            return
-        }
-        val maxW = host - dpFloat(12f).toInt()
-        if (maxW <= 0) return
+        // 两处同时画：长语音键（点「长语音」时看这里）与空格键（长按空格说时看这里）
         val scaled = VOICE_LEVEL_FLOOR + (1f - VOICE_LEVEL_FLOOR) * level.coerceIn(0f, 1f)
-        val w = (maxW * scaled).toInt()
-        val lp = bar.layoutParams ?: return
+        val drawnLong = drawBar(btnVoiceLevel, btnVoiceLong, scaled)
+        val drawnSpace = drawBar(btnSpaceLevel, btnSpace, scaled)
+        if (drawnLong || drawnSpace) return
+        // 两把键都还没测量完（刚重建 / 首次显示）：host 宽是 0，照原样 return 会让电平条
+        // 整段录音都不出现。补一帧重试，最多一轮，避免死循环。
+        if (!voiceLevelRetryPending) {
+            voiceLevelRetryPending = true
+            btnVoiceLong.post {
+                voiceLevelRetryPending = false
+                setVoiceLevel(lastVoiceLevel)
+            }
+        }
+    }
+
+    /** 把 0..1 的电平画成 host 里的一条横条；host 未测量时返回 false */
+    private fun drawBar(bar: View?, host: View?, fraction: Float): Boolean {
+        if (bar == null || host == null) return false
+        val hostW = host.width
+        if (hostW <= 0) return false
+        val maxW = hostW - dpFloat(12f).toInt()
+        if (maxW <= 0) return false
+        val w = (maxW * fraction.coerceIn(0f, 1f)).toInt()
+        val lp = bar.layoutParams ?: return true
         if (lp.width != w) {
             lp.width = w
             bar.layoutParams = lp
         }
+        return true
     }
 
     /** 收尾：电平条清零（录音结束后由 [updateSpaceHint] 调） */
+    /** 收尾：两条电平条一起清零（空格键与长语音键各一条） */
     private fun clearVoiceLevel() {
         lastVoiceLevel = 0f
-        val bar = btnVoiceLevel ?: return
-        val lp = bar.layoutParams ?: return
-        if (lp.width != 0) {
-            lp.width = 0
-            bar.layoutParams = lp
+        for (bar in listOfNotNull(btnVoiceLevel, btnSpaceLevel)) {
+            val lp = bar.layoutParams ?: continue
+            if (lp.width != 0) {
+                lp.width = 0
+                bar.layoutParams = lp
+            }
         }
     }
 
