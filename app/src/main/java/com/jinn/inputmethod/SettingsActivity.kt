@@ -66,7 +66,7 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var switchUserLearning: Switch
     private lateinit var switchPredict: Switch
 
-    /** 在线翻译（BYOK）：总开关 + 入口按钮 + 状态摘要（文案全部代码下发） */
+    /** 在线翻译已整体删除（2026-11-17 定版）：本页不再有相关卡片或入口 */
 
     /** 模糊音容错 / 加更多生僻字入口按钮（文案在代码里下发：strings.xml 默认不改动） */
     private lateinit var btnFuzzyPinyin: Button
@@ -1358,7 +1358,7 @@ class SettingsActivity : ComponentActivity() {
                 .append(info.clipCount).append(" 条、词库 ")
                 .append(info.dictNames.size).append(" 个")
             // 端点类设置也在「设置项」里（语音服务地址、OpenAI 兼容 Base URL / Chat Path 等）：
-            // 「覆盖还原」会用包里的值覆盖本机，而翻译请求会把**本机已有的凭据与光标前的正文**发往
+            // 「覆盖还原」会用包里的值覆盖本机，而联网请求会把**本机已有的凭据与光标前的正文**发往
             // 那个地址 —— 包若来自不可信来源，等于把 Key 交出去（2026-09-30 审查）。
             // 这里明说，不让它藏在「设置 N 项」这个计数后面。
             append("\n\n提示：选「覆盖还原」时，包内的服务端地址与自定义端点（语音服务地址、")
@@ -1722,7 +1722,7 @@ class SettingsActivity : ComponentActivity() {
         // 只使用繁体字：胶囊开关文案（与「自动唤起键盘」同行，紧随其后）
         const val TEXT_USE_TRADITIONAL = "只使用繁体字"
 
-        // 在线翻译（BYOK）：卡片文案（页面内的标题 / 说明 / 按钮文案在 TranslationSettingsActivity 里下发）
+        // 在线翻译已整体删除（2026-11-17 定版）：下面几句文案随之作废，仅保留键名注释便于对照历史
 
         const val TEXT_BUSY_WRITE = "正在写入文件…"
         const val TEXT_READ_FAIL = "无法读取所选文件：可能已被移走、授权已失效，或不是本应用的加密备份包" +
