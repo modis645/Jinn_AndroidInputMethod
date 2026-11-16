@@ -35,7 +35,7 @@ class VoiceLevelView @JvmOverloads constructor(
         .getOrDefault(Color.WHITE)
 
     private var trackColor: Int = Color.argb(
-        0x2E, Color.red(accentColor), Color.green(accentColor), Color.blue(accentColor),
+        0x40, Color.red(accentColor), Color.green(accentColor), Color.blue(accentColor),
     )
 
     /** 推入一个 0..1 的电平（新的从右侧进入，整体左移一格） */
