@@ -34,6 +34,11 @@ class PrefsBackupCoverageTest {
      */
     private val excludedFromBackup = setOf(
         "KEY_USER_DICT_ENABLED",
+        // 2026-11-16：旧版两个开关（去句尾标点 / 保留拼音串）已下线，行为固定化。常量与导入分支
+        // （`KEY_STRIP_PUNC, KEY_COMPOSING -> ok()`）只为「老备份导入时不落进 unknown」而留，
+        // 导出侧不再写它们 —— 故本表排除，跟「退役键」的区别是它仍算合法键名。
+        "KEY_STRIP_PUNC",
+        "KEY_COMPOSING",
         // 百度 access_token 与它的过期时刻是**派生缓存**（过期就重取，见 `Prefs.baiduToken`）：
         // 带进备份没有意义（换机后可能因源 IP / 账户变更失效），还会把一个会过期的凭据副本
         // 多传一份到新机器上。读写仍走 CredentialCrypto，只是不随配置走。
@@ -115,12 +120,15 @@ class PrefsBackupCoverageTest {
         // 2026-11-01 起 114 → 117：新增阿里云百炼实时识别 3 键（WS 地址 / 模型名 / API Key）
         // 2026-11-02 起 117 → 123：新增腾讯云一句话识别 3 键（SecretId / SecretKey / 引擎型号）
         //                       + Azure 短音频识别 3 键（Base URL / 语言码 / 订阅密钥）
+        // 2026-11-16 起 131 → 90：删在线翻译 20 键 + 在线语音六家凭据 12 键 + OpenAI 兼容转写 9 键
         // 2026-11-02 起 123 → 131：新增百度短语音识别 5 键（AK / SK / dev_pid / token / token 过期时刻，
         //                       后两个是派生缓存、刻意不进包）+ Deepgram 3 键（Key / 模型 / 语言）
-        assertEquals("提取到的键常量应是 131 个（改键数请同步本断言）", 131, keyConstants.size)
+        assertEquals("提取到的键常量应是 90 个（改键数请同步本断言）", 90, keyConstants.size)
 
         val export = bodyOf("exportForBackup")
-        val import = bodyOf("importFromBackup")
+        // 压缩空白：导入分支里有一部分写成 `KEY_X ->` 换行接 `asBool(v)?.let{…}`，
+        // 按原样拼 `"$key -> $tool"` 会因换行而恒不命中（2026-11-16 实测 4 个键如此）。
+        val import = bodyOf("importFromBackup").replace(Regex("\\s+"), " ")
 
         val liveKeys = keyConstants.keys - retiredKeys - excludedFromBackup
         val missingExport = liveKeys.filterNot { export.contains(it) }
@@ -172,48 +180,7 @@ class PrefsBackupCoverageTest {
             // OpenAI 兼容转写：地址与模型名是普通字符串（setter 做 trim / 默认回落）
             "KEY_OAI_BASE_URL" to "asString(v)",
             "KEY_OAI_MODEL" to "asString(v)",
-            "KEY_TRANSLATE_ENABLED" to "asBool(v)",
-            "KEY_TRANSLATE_PROVIDER" to "asString(v)",
-            "KEY_TRANSLATE_TARGET" to "asString(v)",
             // 「哪些算原文」12 键：范围模式是字符串（走 of() 归一），字节上限是整数（走 coerceIn 钳位）
-            "KEY_TRANSLATE_SCOPE_ALIYUN" to "asString(v)",
-            "KEY_TRANSLATE_MAX_BYTES_ALIYUN" to "asInt(v)",
-            "KEY_TRANSLATE_SCOPE_AZURE" to "asString(v)",
-            "KEY_TRANSLATE_MAX_BYTES_AZURE" to "asInt(v)",
-            "KEY_TRANSLATE_SCOPE_BAIDU" to "asString(v)",
-            "KEY_TRANSLATE_MAX_BYTES_BAIDU" to "asInt(v)",
-            "KEY_TRANSLATE_SCOPE_BAIDU_LLM" to "asString(v)",
-            "KEY_TRANSLATE_MAX_BYTES_BAIDU_LLM" to "asInt(v)",
-            "KEY_TRANSLATE_SCOPE_DEEPL" to "asString(v)",
-            "KEY_TRANSLATE_MAX_BYTES_DEEPL" to "asInt(v)",
-            "KEY_TRANSLATE_SCOPE_OPENAI" to "asString(v)",
-            "KEY_TRANSLATE_MAX_BYTES_OPENAI" to "asInt(v)",
-            "KEY_AZURE_API_KEY" to "asString(v)",
-            "KEY_AZURE_REGION" to "asString(v)",
-            "KEY_BAIDU_APP_ID" to "asString(v)",
-            "KEY_BAIDU_SECRET_KEY" to "asString(v)",
-            "KEY_ALIYUN_ACCESS_KEY_ID" to "asString(v)",
-            "KEY_ALIYUN_ACCESS_KEY_SECRET" to "asString(v)",
-            "KEY_DEEPL_API_KEY" to "asString(v)",
-            "KEY_BAIDU_LLM_APP_ID" to "asString(v)",
-            "KEY_BAIDU_LLM_API_KEY" to "asString(v)",
-            "KEY_OPENAI_NAME" to "asString(v)",
-            "KEY_OPENAI_BASE_URL" to "asString(v)",
-            "KEY_OPENAI_API_KEY" to "asString(v)",
-            "KEY_OPENAI_MODEL" to "asString(v)",
-            "KEY_OPENAI_CHAT_PATH" to "asString(v)",
-            "KEY_OPENAI_MODELS_PATH" to "asString(v)",
-            "KEY_OPENAI_TARGET_LANGUAGE" to "asString(v)",
-            "KEY_OPENAI_SYSTEM_PROMPT" to "asString(v)",
-            "KEY_OPENAI_USER_PROMPT" to "asString(v)",
-            "KEY_OPENAI_TEMPERATURE" to "asString(v)",
-            "KEY_OPENAI_TOP_P" to "asString(v)",
-            "KEY_OPENAI_MAX_TOKENS" to "asString(v)",
-            "KEY_OPENAI_EXTRA_HEADERS" to "asString(v)",
-            "KEY_OPENAI_EXTRA_JSON" to "asString(v)",
-            "KEY_OPENAI_RESPONSE_PATH" to "asString(v)",
-            "KEY_OPENAI_TIMEOUT_SEC" to "asInt(v)",
-            "KEY_OPENAI_MODELS_CACHE" to "asString(v)",
             "KEY_KEY_CORNER_DP" to "asFloat(v)",
             "KEY_KEY_GAP_DP" to "asFloat(v)",
             "KEY_CANDIDATE_SPACING_DP" to "asFloat(v)",
@@ -364,8 +331,6 @@ class PrefsBackupCoverageTest {
             Triple("themeMode", "MODE_SYSTEM..", "未知模式编号会落到无效主题"),
             Triple("themeLightAtMinutes", "floorMod", "负值/超 24h 会显示成 -1:-30 这类非法时刻"),
             Triple("themeDarkAtMinutes", "floorMod", "同上"),
-            Triple("translateProvider", "TranslationProviderId.of", "未知 id 会取不到 Provider 实现"),
-            Triple("translateTarget", "TranslationLanguage.of", "未知语言码会被服务端直接拒（400 / 58001）"),
             Triple("tapSoundVolume", "TapSound.clampVolume", "越界音量会算出非法播放增益"),
             Triple("tapSoundMap", "TapSound.parseMap", "越界音效索引会让数组访问直接崩"),
             Triple("tapVibrateStrength", "TapSound.clampVibrationTier", "未知档位会让震动规格取不到值"),
@@ -565,43 +530,6 @@ class PrefsBackupCoverageTest {
         }
     }
 
-    /**
-     * 「哪些算原文」两项（2026-09-30）的**归一守卫**：它们按 Provider 存，是 `fun` 而非 `var`，
-     * 上面那条 `取值可能有越界的键必须在读写路径上有归一` 的 `propertyBlock` 覆盖不到。
-     *
-     * 字节上限是 Int，导入的备份可以是任意数值：`0` 不钳位会让原文恒为空（翻译永远提示
-     * 「没有可翻译的文字」），`Int.MAX_VALUE` 则绕过读取上限。范围模式走 `of()` 同理 ——
-     * 未知 id 会取不到对应的取值分支。
-     */
-    @Test
-    fun `原文范围与字节上限的读写两侧都必须归一`() {
-        val scopeGuard = "TranslationScope.of("
-        for ((marker, guard) in listOf(
-            "fun translateScopeOf" to scopeGuard,
-            "fun setTranslateScopeOf" to scopeGuard,
-        )) {
-            val start = source.indexOf(marker)
-            assertTrue("源码里没找到 $marker", start > 0)
-            val body = source.substring(start, (start + 400).coerceAtMost(source.length))
-            assertTrue("$marker 缺少归一（$guard）—— 脏备份的越界值会进运行期", body.contains(guard))
-        }
-        // 字节上限两侧（2026-10-02 改判据，见 L-434）：下界不再是 `coerceIn` 而是「回落该家默认」——
-        // 界面里「清空 / 0」的语义是恢复出厂默认，钳成 1 会让该家变成「每次只翻 1 字节」；
-        // 上界仍是钳制。两侧都必须有，缺哪边都放脏值进运行期。
-        for (marker in listOf("fun translateMaxBytesOf", "fun setTranslateMaxBytesOf")) {
-            val start = source.indexOf(marker)
-            assertTrue("源码里没找到 $marker", start > 0)
-            val body = source.substring(start, (start + 600).coerceAtMost(source.length))
-            assertTrue(
-                "$marker 缺少下界归一（MIN_MAX_BYTES ⇒ 回落该家默认）",
-                "TranslationText.MIN_MAX_BYTES" in body,
-            )
-            assertTrue(
-                "$marker 缺少上界归一（coerceAtMost(MAX_MAX_BYTES)）—— 脏备份的越界值会进运行期",
-                "coerceAtMost(TranslationText.MAX_MAX_BYTES)" in body,
-            )
-        }
-    }
 
     /**
      * 高价值键的**键名不得改**（2026-10-09）。
