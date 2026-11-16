@@ -111,73 +111,53 @@ internal object LocalAsrModel {
     )
 
     /**
-     * 模型目录：**优先外部专属目录**（`Android/data/<pkg>/files/local-asr`）。
+     * 模型目录：**就一个** —— 应用私有 `filesDir/local-asr`，与沙鸥（msime）一致。
      *
-     * 为什么改（2026-11-17）：真机实测这台手机的「清除缓存」会把应用数据目录里的大文件一起回收 ——
-     * 用户数据从 248MB 掉到 7MB（正好只剩词库索引），模型被删掉之后每次都要重下 163MB。
-     * 外部专属目录不参与系统「清除缓存」的回收范围，且随卸载一起删除，安全边界不变
-     * （Scoped Storage 下本应用只能读写自己这一份）。
-     *
-     * 选择规则按「哪里有内容就用哪里」：迁移过的自然落到外部；迁移失败 / 外部不可用时
-     * 仍用原来的 `filesDir/local-asr`，行为与改造前完全一致（不会因为切目录把现有模型判成丢失）。
+     * 为什么回到这一条（2026-11-16 用户对照沙鸥实测）：「模型在用户数据、缓存只有几百 k」
+     * 本来就是这个布局的自然结果 —— `files/` 归「用户数据」，只有 `cacheDir` 才进「缓存」。
+     * 之前为了躲「清缓存删模型」把模型搬到外部专属目录，等于自己造出两套候选目录，随后
+     * 一路长出「三态判定 / 迁移 / 跨分区复制 / 目录翻转」这些复杂度，最后表现出来的反而是
+     * 「文件明明在、页面说未下载」。一个落点 + 一次 rename 才是最简单也最不容易错的。
      */
-    fun dir(context: Context): File {
-        val legacy = File(context.filesDir, DIR_NAME)
-        val ext = runCatching { context.getExternalFilesDir(null) }
-            .getOrNull()?.let { File(it, DIR_NAME) }
-        // 优先级：**真有 model.int8.onnx 的那个目录** > 有任何文件的 > 默认外部。
-        // 只看「非空」是不够的：vad（可选件，640KB）可能先落进外部目录，此时模型本体还
-        // 在内部旧目录，按「非空优先外部」就会把一个只有 vad 的目录当成模型目录，
-        // 于是同一个模型在不同调用点被判成两个路径 —— 表现在界面上就是
-        // 「存储统计说有 240MB，语音页说未下载」。按「有没有 model」定口径就只剩一个答案。
-        if (ext != null && File(ext, MODEL_FILE).isFile) return ext
-        if (File(legacy, MODEL_FILE).isFile) return legacy
-        if (ext != null && ext.listFiles()?.isNotEmpty() == true) return ext
-        if (legacy.listFiles()?.isNotEmpty() == true) return legacy
-        return (ext ?: legacy).apply { mkdirs() }
-    }
+    fun dir(context: Context): File = File(context.filesDir, DIR_NAME).apply { mkdirs() }
+
+    /** 历史版本的落点（`Android/data/<pkg>/files/local-asr`）；唯一用途是把旧模型收回私有目录 */
+    private fun externalDir(context: Context): File? =
+        runCatching { context.getExternalFilesDir(null) }.getOrNull()?.let { File(it, DIR_NAME) }
 
     /**
-     * 一次性把模型从 `filesDir/local-asr` 搬到外部专属目录（幂等，可在任意线程调用）。
+     * 收尾：把历史版本留在外部专属目录里的模型**收回**私有目录（幂等，可在任意线程调用）。
      *
-     * 只做「搬」不做「下载」：先复制到 `.part` 再改名，全部成功才删旧目录 ——
-     * 中途被杀 / 断电时旧目录仍完整，[dir] 会继续用它，不会把模型判成丢失。
+     * 只做「搬」，不做下载；内部已就绪时外部那份直接删掉，不占双份空间。
+     * 搬动用 [copyInto]（先写 `.part` 再改名），中途被杀时私有目录仍是完整件，
+     * 不会把模型判成丢失；搬成功才删外部目录。
      */
     fun migrateIfNeeded(context: Context) {
-        val legacy = File(context.filesDir, DIR_NAME)
-        val ext = runCatching { context.getExternalFilesDir(null) }.getOrNull()
-        if (ext == null) {
-            Diagnostics.w("LocalAsr", "外部专属目录不可用，继续使用 filesDir/local-asr")
+        val target = dir(context)
+        val ext = externalDir(context) ?: return
+        if (ext.absolutePath == target.absolutePath) return
+        val extFiles = ext.listFiles().orEmpty().filter { it.isFile && it.length() > 0L }
+        if (extFiles.isEmpty()) {
+            runCatching { ext.deleteRecursively() }
             return
         }
-        val target = File(ext, DIR_NAME)
-        if (target.absolutePath == legacy.absolutePath) return
-        if (target.listFiles()?.isNotEmpty() == true) return
-        val sources = legacy.listFiles().orEmpty().filter { it.isFile && it.length() > 0L }
-        if (sources.isEmpty()) return
-        target.mkdirs()
-        var movedAll = true
-        for (f in sources) {
-            val tmp = File(target, f.name + ".part")
-            val ok = runCatching {
-                tmp.delete()
-                f.inputStream().use { input ->
-                    tmp.outputStream().use { output -> input.copyTo(output, 1 shl 20) }
-                }
-                tmp.renameTo(File(target, f.name))
-            }.getOrDefault(false)
-            if (!ok) {
-                movedAll = false
-                runCatching { tmp.delete() }
+        if (isReady(context)) {
+            runCatching { ext.deleteRecursively() }
+            Diagnostics.i("LocalAsr", "私有目录已就绪，清掉外部历史残留")
+            return
+        }
+        var all = true
+        for (f in extFiles) {
+            if (!copyInto(f, File(target, f.name))) {
+                all = false
                 break
             }
         }
-        if (movedAll) {
-            legacy.deleteRecursively()
-            Diagnostics.i("LocalAsr", "模型已迁到外部专属目录（清缓存不会再删）")
+        if (all) {
+            runCatching { ext.deleteRecursively() }
+            Diagnostics.i("LocalAsr", "已把外部历史模型收回私有目录（" + audit(context).line() + "）")
         } else {
-            target.listFiles()?.forEach { runCatching { it.delete() } }
-            Diagnostics.w("LocalAsr", "模型迁移失败，继续使用 filesDir/local-asr")
+            Diagnostics.w("LocalAsr", "外部历史模型回收失败，保留原样（不影响已有内容）")
         }
     }
 
@@ -237,7 +217,7 @@ internal object LocalAsrModel {
         val d = dir(context)
         if (audit(context).ready) return false
         val names = listOf(MODEL_FILE, TOKENS_FILE)
-        val legacy = File(context.filesDir, DIR_NAME)
+        val ext = externalDir(context)
         val unpack = File(context.cacheDir, "local-asr-unpack")
         val partHit = d.listFiles().orEmpty().any { f ->
             if (!f.isFile || !f.name.endsWith(".part")) return@any false
@@ -248,8 +228,8 @@ internal object LocalAsrModel {
             val have = File(d, n).let { it.isFile && it.length() >= minBytesOf(n) }
             if (have) return@any false
             val inUnpack = File(unpack, n).let { it.isFile && it.length() >= minBytesOf(n) }
-            val inLegacy = File(legacy, n).let { it.isFile && it.length() >= minBytesOf(n) }
-            inUnpack || inLegacy
+            val inExt = ext?.let { e -> File(e, n).let { it.isFile && it.length() >= minBytesOf(n) } } == true
+            inUnpack || inExt
         }
         return partHit || elsewhere
     }
@@ -258,8 +238,8 @@ internal object LocalAsrModel {
      * 自愈：把「已经躺在别处 / 只差最后一改名」的模型件补回模型目录。
      *
      * 覆盖三种真实见过的残局：
-     *  ① 跨分区复制被中断，目录里留下体积完整的 `xxx.part` —— 直接改名即可，不用重下；
-     *  ② 迁移到一半（模型在外部、tokens 还在 `filesDir/local-asr`）；
+     *  ① 复制被中断，目录里留下体积完整的 `xxx.part` —— 直接改名即可，不用重下；
+     *  ② 历史版本把模型留在了外部专属目录（旧布局），私有目录里缺件；
      *  ③ 上次解包成功但换入前被杀，完整两件还留在 `cacheDir/local-asr-unpack`。
      *
      * 只在**缺件**时才动，任何时候都不会覆盖一个已就绪的模型；会搬大文件，请放在后台线程调用。
@@ -287,13 +267,13 @@ internal object LocalAsrModel {
             }
         }
 
-        // ②③ 从旧内部目录 / 缓存解包目录补齐
-        val legacy = File(context.filesDir, DIR_NAME)
+        // ②③ 从外部历史目录 / 缓存解包目录补齐
+        val ext = externalDir(context)
         val unpack = File(context.cacheDir, "local-asr-unpack")
         for (name in listOf(MODEL_FILE, TOKENS_FILE, VAD_FILE)) {
             val target = File(d, name)
             if (target.isFile && target.length() >= minBytesOf(name)) continue
-            for (src in listOf(File(unpack, name), File(legacy, name))) {
+            for (src in listOfNotNull(File(unpack, name), ext?.let { File(it, name) })) {
                 if (src.absolutePath == target.absolutePath) continue
                 if (!src.isFile || src.length() < minBytesOf(name)) continue
                 if (copyInto(src, target)) {
