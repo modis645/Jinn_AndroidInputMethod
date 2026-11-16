@@ -34,7 +34,15 @@ internal class LocalSenseVoiceClient(
 
     override val tag: String = "LocalAsr"
 
-    override fun prepare(): String? = LocalAsrModel.problem(prefs.context)
+    override fun prepare(): String? {
+        val problem = LocalAsrModel.problem(prefs.context)
+        // 分阶段打点：模型在不在、够不够大、VAD 在不在 —— 这三步决定「点了语音为什么没反应」
+        val model = LocalAsrModel.modelFile(prefs.context)
+        if (model.isFile) VoiceTrace.mark("model present", "bytes=${model.length()}")
+        if (model.isFile && model.length() > LocalAsrModel.MODEL_MIN_BYTES) VoiceTrace.mark("size ok")
+        if (LocalAsrModel.hasVad(prefs.context)) VoiceTrace.mark("vad ok")
+        return problem
+    }
 
     override fun recognize(wav: ByteArray, pcm16: ByteArray): BatchOutcome {
         if (!LocalAsrModel.modelFile(prefs.context).isFile ||
@@ -128,6 +136,7 @@ internal class LocalSenseVoiceClient(
 
     /** PCM16 → 文本；部分识别与最终识别共用（部分识别不跑 VAD，省一半时间） */
     private fun decodePcm16(pcm16: ByteArray, withVad: Boolean): String {
+        VoiceTrace.mark("first frame", "audio=${pcm16.size / 2 / SAMPLE_RATE.toFloat()}s vad=$withVad")
         val samples = pcm16ToFloat(pcm16)
         if (samples.isEmpty()) return ""
         val recognizer = recognizerFor(prefs.context)
@@ -222,7 +231,10 @@ internal class LocalSenseVoiceClient(
                                 stream.acceptWaveform(slice, SAMPLE_RATE)
                                 recognizer.decode(stream)
                                 val piece = recognizer.getResult(stream).text.trim()
-                                if (piece.isNotEmpty()) sentences.add(piece)
+                                if (piece.isNotEmpty()) {
+                                    if (sentences.isEmpty()) VoiceTrace.mark("first sentence", "chars=${piece.length}")
+                                    sentences.add(piece)
+                                }
                                 pieces++
                             } finally {
                                 stream.release()
@@ -258,27 +270,9 @@ internal class LocalSenseVoiceClient(
      * 所以句尾缺标点的补「，」，最后一句补「。」—— 只依据「模型自己说出了句子边界」，
      * 不猜语义。
      */
-    private fun joinSentences(sentences: List<String>): String {
-        val sb = StringBuilder()
-        for ((i, raw) in sentences.withIndex()) {
-            val piece = raw.trim()
-            if (piece.isEmpty()) continue
-            sb.append(piece)
-            if (sb.last() in SENTENCE_END) continue
-            sb.append(if (i == sentences.lastIndex) '。' else '，')
-        }
-        return sb.toString()
-    }
+    private fun joinSentences(sentences: List<String>): String = VoiceText.joinSentences(sentences)
 
-    /**
-     * 整段解码（不走 VAD）时的收尾：模型多数情况自带句末标点，缺了就补一个「。」
-     * 没有它，长段落会在输入框里连成一串、看不出哪里是句尾。
-     */
-    private fun finishText(raw: String): String {
-        val t = raw.trim()
-        if (t.isEmpty()) return t
-        return if (t.last() in SENTENCE_END) t else t + "。"
-    }
+    private fun finishText(raw: String): String = VoiceText.finishText(raw)
 
     /** 10ms 一帧的 RMS（0..1，float 域）；不足一帧的尾巴丢掉（对回补判据无影响） */
     private fun frameEnergies(samples: FloatArray): FloatArray {
@@ -372,8 +366,7 @@ internal class LocalSenseVoiceClient(
         const val PARTIAL_STEP_BYTES = 8000
 
         /** 视为「这句话已经说完」的字符：出现它就不要再补标点 */
-        val SENTENCE_END = charArrayOf('。', '！', '？', '.', '!', '?', '…')
-
+    
         /** 解码串行化（recognizer / stream 都非线程安全） */
         val lock = Any()
 
