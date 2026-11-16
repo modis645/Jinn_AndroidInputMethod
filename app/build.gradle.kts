@@ -126,6 +126,19 @@ android {
         unitTests.isReturnDefaultValues = true
     }
 
+    // 单测失败时把**断言消息**打进日志（2026-11-16）：Gradle 默认只报「用例名 FAILED」，
+   // 断言里写好的「哪个文件哪条判据过期」全被吞掉，CI 日志上只能看到一串用例名，
+   // 修缮时只能靠猜。exceptionFormat = FULL 只是测试报告细节，不影响出包与产物。
+    testOptions.unitTests.all {
+        it.testLogging {
+            events("failed", "skipped")
+            exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+            showStackTraces = false
+            showExceptions = true
+            showCauses = true
+        }
+    }
+
     packaging {
         resources.excludes += setOf(
             "META-INF/*.kotlin_module",
