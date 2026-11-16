@@ -1359,12 +1359,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
             // 候选栏自带更高的 elevation，会把浮层整条盖住（v66 用户看不到浮层就是这个原因）。
             val lp = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
-                dpFloat(22f).toInt(),
+                dpFloat(44f).toInt(),
             )
-            lp.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-            lp.leftMargin = dpFloat(16f).toInt()
-            lp.rightMargin = dpFloat(16f).toInt()
-            lp.bottomMargin = dpFloat(62f).toInt()
+            // 浮在**键盘正中间**（讯飞 / 微信同款位置）：录音时用户的视线就在键盘上，
+            // 中部一条横向波形最显眼；结束即消失，不留痕。
+            lp.gravity = Gravity.CENTER
+            lp.leftMargin = dpFloat(24f).toInt()
+            lp.rightMargin = dpFloat(24f).toInt()
             bar.layoutParams = lp
             bar.visibility = View.GONE
             bar.elevation = dpFloat(30f)
@@ -5140,9 +5141,12 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 只在长按态生效：没在录音时这条必须是空的，否则「键盘自己在录音」的观感会误导用户。
      */
     fun updateVoiceLevel(level: Float) {
-        // 不在视图侧判「是否在录」：录没录只有 IME 知道（本方法也只在那时被调用）。
-        // 原先按 `voiceHoldActive / voiceToggleActive` 短路，视图重建（换肤 / 换输入框）后
-        // 这两个字段是 false 而录音仍在跑 —— 电平整段被丢掉，用户看到的就是「没有电平波」。
+        // 录没录以「手势态」为准：录音结束后录音器还会有几帧电平排在回调队列里，
+        // 那些帧会把浮层重新点亮、留下一条横杠且再也不消失（2026-11-17 用户反馈）。
+        if (!voiceHoldActive && !voiceToggleActive) {
+            if (lastVoiceLevel != 0f) clearVoiceLevel()
+            return
+        }
         val smoothed = maxOf(level.coerceIn(0f, 1f), lastVoiceLevel * VOICE_LEVEL_DECAY)
         lastVoiceLevel = smoothed
         setVoiceLevel(smoothed)
