@@ -341,6 +341,14 @@
                     android:textColor="@color/text_primary"
                     android:textSize="13dp"
                     tools:ignore="SpUsage" />
+
+                <!-- 长按空格说话时的电平条：用户的眼睛就落在这把键上，条画在这里才看得见 -->
+                <View
+                    android:id="@+id/key_space_level"
+                    android:layout_width="0dp"
+                    android:layout_height="3dp"
+                    android:layout_marginTop="3dp"
+                    android:background="@color/accent" />
             </LinearLayout>
 
             <!-- 长语音键：与空格长按同一条录音链路，专供「说一整段」，键内显示实时音量条 -->
@@ -368,9 +376,9 @@
                 <View
                     android:id="@+id/key_voice_level"
                     android:layout_width="0dp"
-                    android:layout_height="3dp"
+                    android:layout_height="4dp"
                     android:layout_marginTop="3dp"
-                    android:background="@color/text_secondary" />
+                    android:background="@color/accent" />
             </LinearLayout>
 
             <Button
