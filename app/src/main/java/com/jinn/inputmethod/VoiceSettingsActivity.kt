@@ -297,6 +297,8 @@ class VoiceSettingsActivity : ComponentActivity() {
      */
     private fun autoDownloadLocalAsrOnce() {
         if (!prefs.voiceInputEnabled) return
+        // 先把随包的两件小件落到位：这样「模型未下载」的判定只剩 239MB 本件一条原因
+        runCatching { LocalAsrModel.ensureBundled(this) }
         if (LocalAsrModel.isReady(this) || LocalAsrDownloader.isRunning()) return
         if (localAsrUserCancelled) {
             Diagnostics.i(TAG, "离线语音：本次会话已取消过下载，不再自动开始")
