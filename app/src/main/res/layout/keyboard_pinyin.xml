@@ -50,7 +50,7 @@
             <!-- 第一行：10 个字母 -->
             <LinearLayout
                 android:layout_width="match_parent"
-                android:layout_height="58dp"
+                android:layout_height="48dp"
                 android:orientation="horizontal">
 
                 <com.jinn.inputmethod.PinyinKey
@@ -117,7 +117,7 @@
             <!-- 第二行：9 个字母 -->
             <LinearLayout
                 android:layout_width="match_parent"
-                android:layout_height="58dp"
+                android:layout_height="48dp"
                 android:orientation="horizontal">
 
                 <com.jinn.inputmethod.PinyinKey
@@ -181,7 +181,7 @@
                  20dp×66dp ⇒ 图标 20dp，正好是原先的两倍（要求「内部文本两倍」）。 -->
             <LinearLayout
                 android:layout_width="match_parent"
-                android:layout_height="58dp"
+                android:layout_height="48dp"
                 android:orientation="horizontal">
 
                 <ImageButton
@@ -422,7 +422,7 @@
     <FrameLayout
         android:id="@+id/candidate_bar"
         android:layout_width="match_parent"
-        android:layout_height="65dp"
+        android:layout_height="53dp"
         android:layout_gravity="top"
         android:background="@color/kb_candidate_bg">
 
@@ -479,7 +479,7 @@
         <FrameLayout
             android:id="@+id/pinyin_bar"
             android:layout_width="match_parent"
-            android:layout_height="26dp"
+            android:layout_height="21dp"
             android:layout_gravity="top"
             android:clipChildren="false"
             android:paddingStart="8dp"
@@ -497,7 +497,7 @@
                 android:paddingStart="0dp"
                 android:paddingEnd="40dp"
                 android:textColor="@color/text_secondary"
-                android:textSize="20sp" />
+                android:textSize="16sp" />
 
             <!-- 展开候选栏（▲/▾）：位于 ✕ **左侧**，与它同高、紧挨但不重叠（✕ 占 end 40dp，
                  本键再退 40dp）。仅在「候选行数 = 1 行」档、且候选多到需要展开时出现（BUG.md L-1393）。
@@ -513,7 +513,7 @@
                 android:gravity="center"
                 android:text="▲"
                 android:textColor="@color/text_secondary"
-                android:textSize="20sp"
+                android:textSize="16sp"
                 android:visibility="gone" />
 
             <!-- 清空候选（✕）：与拼音条同高、贴其右端 —— 单行档在顶部那一行、双行档在中间那行，
@@ -529,7 +529,7 @@
                 android:gravity="center"
                 android:text="@string/key_clear_candidates"
                 android:textColor="@color/text_secondary"
-                android:textSize="20sp"
+                android:textSize="16sp"
                 android:visibility="gone" />
         </FrameLayout>
 
