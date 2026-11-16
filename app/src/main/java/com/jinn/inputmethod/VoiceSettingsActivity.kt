@@ -251,6 +251,9 @@ class VoiceSettingsActivity : ComponentActivity() {
 
         refreshLocalAsrStatus()
         refreshMicState()
+        // 「标记在跑、其实一点动静都没有」的残局先清掉：上一次任务的收尾没走到时，
+        // 按钮会一直显示「取消下载」，用户点它变成「下载」才真正开始 —— 正是这条反馈。
+        clearStaleDownloadFlag()
         // 进页面就自动开始下载（沙鸥一直是这个行为）
         autoDownloadLocalAsrOnce()
         // 已有任务在跑（典型是 IME 启动时自己发起的）：本页没有它的进度回调，
@@ -287,6 +290,24 @@ class VoiceSettingsActivity : ComponentActivity() {
         cardVoiceServer.visibility = visibility
         cardLocalAsr.visibility = visibility
         if (voiceEnabled) refreshLocalAsrStatus()
+    }
+
+    /**
+     * 判死「假在跑」：`isRunning()` 为真，但开跑已超过 [STALE_START_MS]，却既没有阶段也没有进度。
+     *
+     * 正常任务的第一个阶段「正在连接第 1/N 个下载源」在几十毫秒内就会写上；这么久什么都没有，
+     * 只可能是上一次任务的 finally 没执行（进程被冻结、线程没起来）。这时按钮一直显示
+     * 「取消下载」，用户点了才变「下载」再开始 —— 不如自己解开，然后按「未下载」态重新自动开一次。
+     */
+    private fun clearStaleDownloadFlag() {
+        if (!LocalAsrDownloader.isRunning()) return
+        if (!LocalAsrDownloader.lastStage.isNullOrBlank() || LocalAsrDownloader.lastProgress > 0) return
+        val started = LocalAsrDownloader.startedAtMs
+        if (started <= 0L || System.currentTimeMillis() - started <= STALE_START_MS) return
+        Diagnostics.w(TAG, "离线语音：下载标记在跑但没有进展，判为残局并清除")
+        LocalAsrDownloader.cancel()
+        lastDownloadPct = 0
+        refreshLocalAsrStatus()
     }
 
     /**
@@ -691,6 +712,9 @@ class VoiceSettingsActivity : ComponentActivity() {
 
         /** 进度与阶段都不动的容忍上限：到点就停掉，把按钮还给用户（见 downloadWatchdog） */
         const val DOWNLOAD_STALL_MS = 60_000L
+
+        /** 「标记在跑但毫无动静」多久就判为残局（见 clearStaleDownloadFlag） */
+        const val STALE_START_MS = 15_000L
 
         /** 页面标题（= 设置页入口按钮上的那句） */
         const val TEXT_TITLE = "离线语音"
