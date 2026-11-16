@@ -425,6 +425,15 @@ internal object LocalAsrDownloader {
                             ) runCatching { f.delete() }
                         }
                         ok = true
+                        // 写成功 ≠ 读得到：文件可能落到另一个候选目录（外部不可用会退回 filesDir），
+                        // 也可能被同名的旧件顶替。用同一个 dir() 口径复检一次，
+                        // 不一致就把事实（哪个文件多大）写进失败原因，界面照抄即可。
+                        val audit = LocalAsrModel.audit(context)
+                        Diagnostics.i("LocalAsr", "换入后体检 " + audit.line())
+                        if (!audit.ready) {
+                            ok = false
+                            reason = "解包后校验未通过：" + audit.line()
+                        }
                     }
                     // ── 4. VAD（可选件）：失败只降级，不算下载失败 ──
                     if (ok) downloadVad(context, onProgress)
