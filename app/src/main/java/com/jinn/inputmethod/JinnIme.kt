@@ -398,7 +398,7 @@ class JinnIme : InputMethodService() {
      */
     private var lastClearedText: String? = null
 
-：录音期间持有，避免被来电/其他 App 抢占麦克风 */
+    /** 音频焦点：录音期间持有，避免被来电/其他 App 抢占麦克风 */
     private val audioManager by lazy { getSystemService(Context.AUDIO_SERVICE) as AudioManager }
     private var focusRequest: AudioFocusRequest? = null
     private val audioFocusListener = AudioManager.OnAudioFocusChangeListener { change ->
