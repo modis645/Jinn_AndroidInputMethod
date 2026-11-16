@@ -35,6 +35,8 @@ internal class LocalSenseVoiceClient(
     override val tag: String = "LocalAsr"
 
     override fun prepare(): String? {
+        // 兜一次：IME 起进程时已释放，这里只做「在不在」的便宜检查
+        LocalAsrModel.ensureBundled(prefs.context)
         val problem = LocalAsrModel.problem(prefs.context)
         // 分阶段打点：模型在不在、够不够大、VAD 在不在 —— 这三步决定「点了语音为什么没反应」
         val model = LocalAsrModel.modelFile(prefs.context)
