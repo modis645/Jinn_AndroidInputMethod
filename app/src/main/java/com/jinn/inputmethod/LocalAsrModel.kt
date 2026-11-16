@@ -111,43 +111,36 @@ internal object LocalAsrModel {
     )
 
     /**
-     * 模型目录：**就一个** —— 外部专属目录 `Android/data/<pkg>/files/local-asr`，与沙鸥（msime）一致。
+     * 模型目录：**就一个** —— 应用私有目录 `files/local-asr`，与沙鸥（msime）一致。
      *
-     * 为什么是外部而不是私有 `filesDir`（2026-11-16 真机对照，两轮数字）：
-     *  - 模型放私有 `files/local-asr` 时，这台 MIUI 把同一份 240MB **同时**算进「用户数据」和
-     *    「缓存」（实测用户数据 241MB / 缓存 241MB）；
-     *  - 模型放外部专属目录时，只有「用户数据 ~240MB」、「缓存」掉到几百 k ——
-     *    这正是沙鸥（msime）在本机显示的那组数字。
-     * 沙鸥的模型清单与我们是同一份（同一归档 sha256、同一组 model.int8.onnx / tokens.txt /
-     * silero_vad.onnx），所以差别只在落点。外部专属目录还随卸载一起删，安全边界不变。
+     * 2026-11-16 起回到私有目录，理由是把「解包换入」这条链路真正做简单：
+     *  - 下载档与解包目录都在 `cacheDir`，与 `filesDir` **同一个分区**，换入就是一次
+     *    `renameTo`（原子、零拷贝）。之前落外部专属目录 `Android/data/<pkg>/files`
+     *    与 cacheDir 不同分区，`renameTo` 必失败，退化成 239MB 逐字节复制 ——
+     *    「解包失败：无法写入模型目录」就是那条退化路径写不出来。
+     *  - 沙鸥在本机显示的是「用户数据 ~240MB、缓存几百 K」：模型在应用数据里，
+     *    缓存只放过程中的归档与解包临时件，用完即删。我们按同一口径落。
+     *  - 私有目录随卸载清空，不进相机的媒体库，也不需要任何存储权限。
      *
      * 判定规则只有一条：**这个目录**。不再有「哪里有内容就用哪里」的多态判定 ——
-     * 那正是「文件明明在、页面说未下载」的来源。私有目录只作为搬迁源与极少数外置不可用时的退路。
+     * 那正是「文件明明在、页面说未下载」的来源。外部专属目录只作为历史落点的搬迁源。
      */
-    fun dir(context: Context): File {
-        val ext = runCatching { context.getExternalFilesDir(null) }.getOrNull()
-        return if (ext != null) {
-            File(ext, DIR_NAME).apply { mkdirs() }
-        } else {
-            // 极少数机型外置存储不可用：退回私有目录，行为不变，代码里不为此维护第二套判定
-            Diagnostics.w("LocalAsr", "外部专属目录不可用，退回私有目录")
-            File(context.filesDir, DIR_NAME).apply { mkdirs() }
-        }
-    }
+    fun dir(context: Context): File = File(context.filesDir, DIR_NAME).apply { mkdirs() }
 
-    /** 私有目录（历史落点 / 外置不可用时的退路）；只用于搬迁与自愈，不做"哪个有内容用哪个"的判断 */
-    private fun privateDir(context: Context): File = File(context.filesDir, DIR_NAME)
+    /** 历史落点（外部专属目录 `Android/data/<pkg>/files/local-asr`）；只用于搬迁，不做就绪判定 */
+    private fun legacyDir(context: Context): File? =
+        runCatching { context.getExternalFilesDir(null) }.getOrNull()?.let { File(it, DIR_NAME) }
 
     /**
-     * 收尾：把历史版本留在私有 `files/local-asr` 里的模型搬到外部专属目录（幂等，可在任意线程调用）。
+     * 收尾：把历史版本留在外部专属目录里的模型搬进私有 `files/local-asr`（幂等，可在任意线程调用）。
      *
-     * 只做「搬」，不做下载；外部已就绪时私有那份直接删掉，不占双份空间。
-     * 搬动用 [copyInto]（先写 `.part` 再改名），中途被杀时外部目录仍是完整件，
-     * 不会把模型判成丢失；搬成功才删私有目录。
+     * 只做「搬」，不做下载；私有目录已就绪时历史那份直接删掉，不占双份空间。
+     * 搬动用 [copyInto]（先写 `.part` 再改名），中途被杀时目标目录仍是完整件，
+     * 不会把模型判成丢失；搬成功才删历史目录。
      */
     fun migrateIfNeeded(context: Context) {
         val target = dir(context)
-        val src = privateDir(context)
+        val src = legacyDir(context) ?: return
         if (src.absolutePath == target.absolutePath) return
         val srcFiles = src.listFiles().orEmpty().filter { it.isFile && it.length() > 0L }
         if (srcFiles.isEmpty()) {
@@ -156,7 +149,7 @@ internal object LocalAsrModel {
         }
         if (audit(context).ready) {
             runCatching { src.deleteRecursively() }
-            Diagnostics.i("LocalAsr", "外部目录已就绪，清掉私有历史残留")
+            Diagnostics.i("LocalAsr", "私有目录已就绪，清掉外部历史残留")
             return
         }
         var all = true
@@ -168,7 +161,7 @@ internal object LocalAsrModel {
         }
         if (all) {
             runCatching { src.deleteRecursively() }
-            Diagnostics.i("LocalAsr", "已把私有目录里的历史模型搬到外部专属目录（" + audit(context).line() + "）")
+            Diagnostics.i("LocalAsr", "已把外部历史落点的模型搬进私有目录（" + audit(context).line() + "）")
         } else {
             Diagnostics.w("LocalAsr", "历史模型搬迁失败，保留原样（不影响已有内容）")
         }
@@ -230,7 +223,7 @@ internal object LocalAsrModel {
         val d = dir(context)
         if (audit(context).ready) return false
         val names = listOf(MODEL_FILE, TOKENS_FILE)
-        val ext = privateDir(context)
+        val ext = legacyDir(context)
         val unpack = File(context.cacheDir, "local-asr-unpack")
         val partHit = d.listFiles().orEmpty().any { f ->
             if (!f.isFile || !f.name.endsWith(".part")) return@any false
@@ -281,7 +274,7 @@ internal object LocalAsrModel {
         }
 
         // ②③ 从私有历史目录 / 缓存解包目录补齐
-        val ext = privateDir(context)
+        val ext = legacyDir(context)
         val unpack = File(context.cacheDir, "local-asr-unpack")
         for (name in listOf(MODEL_FILE, TOKENS_FILE, VAD_FILE)) {
             val target = File(d, name)
