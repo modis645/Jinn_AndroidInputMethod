@@ -101,8 +101,10 @@ class SimpTradWordBackTest {
         val count = orderedEntries().size
         assertEquals("词级表条数变了（改文档前先确认真值）：$count", 9_139, count)
 
+        // 2026-11-16：AGENTS.md / `.wwlia-handoff` 台账随瘦身一并移除（fork 里不再维护那份
+        // 现状说明），条数对拍只剩三份仍在仓库里的公开文档 / 构建脚本。
         val docs = listOf(
-            "README.md", "README_EN.md", "AGENTS.md", "tools/dict_builder/export_dicts.py",
+            "README.md", "README_EN.md", "tools/dict_builder/export_dicts.py",
         )
         for (name in docs) {
             val text = listOf(File(name), File("../$name")).firstOrNull { it.isFile }?.readText()
@@ -111,9 +113,5 @@ class SimpTradWordBackTest {
             assertFalse("$name 仍写着旧的 8,100 条（资产实测 $count 条）", "8,100" in text)
             assertTrue("$name 缺少当前条数 9,139（资产实测 $count 条）", "9,139" in text)
         }
-        val agents = listOf(File("AGENTS.md"), File("../AGENTS.md")).first { it.isFile }.readText()
-        assertFalse("AGENTS.md 仍写着旧的覆盖度 1,738", "1,738" in agents)
-        assertFalse("工程约定 仍写着旧的覆盖度 1,744", "1,744" in agents)
-        assertTrue("工程约定 缺少当前覆盖度 1,843", "1,843" in agents)
     }
 }
