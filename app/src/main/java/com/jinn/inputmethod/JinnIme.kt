@@ -1057,7 +1057,7 @@ class JinnIme : InputMethodService() {
             // null，又会落进「按无选区放行」那条路。这里只要位置，给个明确上限即可。
             connection.getExtractedText(
                 android.view.inputmethod.ExtractedTextRequest().apply {
-                    hintMaxChars = TranslationText.MAX_READ_CHARS
+                    hintMaxChars = 2000
                 },
                 0,
             )
@@ -5629,70 +5629,6 @@ class JinnIme : InputMethodService() {
  */
 internal fun fieldKeyOf(packageName: String?, fieldId: Int): String? =
     if (packageName.isNullOrEmpty()) null else "$packageName#$fieldId"
-
-/**
- * 去重指纹：把「服务方 + **生效**目标语言 + 原文范围 + 原文」拼成一个可比较的串。
- *
- * 为什么必须带那三个维度（2026-10-03 修复 L-655）：它们都是**用户可改**的设置，
- * 改了之后点同一段文本是**另一次合法请求**。只比裸原文时，用户换语言 / 换服务方 / 把范围
- * 从「光标前本行」改成「编辑框全部」再点同一段，会被自己的去重挡回去，提示
- * 「刚刚翻译过，未重复发送」—— 而他从未翻译过这段的日文版。
- *
- * ⚠ 目标语言这一维必须用**生效值**而不是枚举名（2026-10-04 修复 L-787）：OpenAI 兼容路径
- * 真正生效的是自由文本 `Prefs.openAiTargetLanguage`，在它上面改语言时枚举不变 ⇒ 指纹逐字
- * 相同，用户「翻得不对、改语言再试」的第二次付费请求仍被误拦成「刚刚翻译过」。
- *
- * 放独立纯函数而不是内联拼串：守卫能**真跑**（内联拼串只能源码对拍，而 L-685 记录的
- * 正是「钉字符串存在性」这类改错也不会红的假守卫）。放在**文件顶层**是因为 `JinnIme`
- * 是 `InputMethodService`，JVM 单测构造不了它。
- */
-internal fun translateRepeatKey(
-    provider: TranslationProviderId,
-    target: TranslationLanguage,
-    openAiTarget: String,
-    scope: TranslationScope,
-    sent: String,
-    // 动作维度（2026-10-09）：同一段原文的「翻译」与「润色」是两次合法请求 ——
-    // 指纹不含动作时，第二次会被误判「刚刚翻译过」而静默丢弃。
-    // ⚠ 带默认值且放**末尾**：既有 6 处位置参数调用（RecentFixesRegressionTest）零改动。
-    action: AiAction = AiAction.DEFAULT,
-): String =
-    "${action.id}|${provider.id}|${effectiveTargetLabel(provider, target, openAiTarget)}|${scope.id}|$sent"
-
-/**
- * 「生效目标语言」的规范串：去重指纹与诊断日志共用的唯一口径（BUG.md L-787）。
- *
- * 为什么不能直接用枚举 [target]：OpenAI 兼容路径真正生效的是**自由文本** `Prefs.openAiTargetLanguage`
- * （`OpenAiTranslator.buildBody` 读的就是它），枚举 `translateTarget` 在那条链路上只是不相干的字段。
- * 前缀 `openai:` 让自由文本与枚举名不可能撞车（枚举名全大写，自由文本是用户输入的语言名）。
- */
-internal fun effectiveTargetLabel(
-    provider: TranslationProviderId,
-    target: TranslationLanguage,
-    openAiTarget: String,
-): String = if (provider == TranslationProviderId.OPENAI) {
-    "openai:${OpenAiTranslator.effectiveTarget(openAiTarget)}"
-} else {
-    target.name
-}
-
-/**
- * 落地复核的判据：译文尾部**是否真的在输入框里**。三态（2026-10-03 修复 L-681）：
- *  - `null` = **未测**（读不到，或宿主少给了字符）⇒ 不提示、不误报；
- *  - `true` = 尾部对得上，落地确认；
- *  - `false` = 尾部对不上，宿主把写入丢了 ⇒ 提示「请手动粘贴」。
- *
- * ⚠ 为什么要把「少给字符」也算未测：`getTextBeforeCursor(n, 0)` 的契约是「**至多** n 个字符」，
- * 宿主可以合法少给（窗口上限、厂商实现差异）。原先直接 `endsWith(submit.takeLast(probeLen))`，
- * 少给时长度不等、判据必为 false ⇒ 一条**已经写进输入框**的译文被报成「可能未写入」，
- * 用户照提示手动再贴一次，正文里就变成两份译文 —— 提示反过来造成损害。
- */
-internal fun commitProbeVerdict(returned: String?, submit: String, probeLen: Int): Boolean? = when {
-    returned == null -> null
-    // 少给字符：无法比对 ⇒ 记「未测」，不误报
-    returned.length < probeLen -> null
-    else -> returned.endsWith(submit.takeLast(probeLen))
-}
 
 
 /**
