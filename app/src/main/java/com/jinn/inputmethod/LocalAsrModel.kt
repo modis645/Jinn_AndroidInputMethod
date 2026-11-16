@@ -150,7 +150,7 @@ internal object LocalAsrModel {
         val stray: List<String>,
     ) {
         val ready: Boolean
-            get() = modelBytes > MODEL_MIN_BYTES && tokensBytes > 0
+            get() = readyOf(modelBytes, tokensBytes)
 
         /** 一行给用户 / 日志看的事实 */
         fun line(): String {
@@ -164,8 +164,13 @@ internal object LocalAsrModel {
         }
     }
 
-    fun audit(context: Context): Audit {
-        val d = dir(context)
+    fun audit(context: Context): Audit = auditDir(dir(context))
+
+    /**
+     * 体检的实际实现：只认目录与文件大小，不碰 Context —— 这样临时目录也能跑，
+     * 「模型在不在 / 够不够大」这条判定才有单测（真机上它是「页面说未下载」的唯一判据）。
+     */
+    fun auditDir(d: File): Audit {
         val files = d.listFiles().orEmpty().filter { it.isFile }
         fun sizeOf(n: String) = files.firstOrNull { it.name == n }?.length() ?: 0L
         val known = setOf(MODEL_FILE, TOKENS_FILE, VAD_FILE)
@@ -174,6 +179,10 @@ internal object LocalAsrModel {
             .map { it.name + " " + if (it.length() >= 1024 * 1024) "${it.length() / (1024 * 1024)}MB" else "${it.length() / 1024}KB" }
         return Audit(d.absolutePath, sizeOf(MODEL_FILE), sizeOf(TOKENS_FILE), sizeOf(VAD_FILE), stray)
     }
+
+    /** 「算不算就绪」的唯一判据：模型要**严格大于**下限，tokens 只要求非空 */
+    fun readyOf(modelBytes: Long, tokensBytes: Long): Boolean =
+        modelBytes > MODEL_MIN_BYTES && tokensBytes > 0
 
     private fun minBytesOf(name: String): Long = when (name) {
         MODEL_FILE -> MODEL_MIN_BYTES
