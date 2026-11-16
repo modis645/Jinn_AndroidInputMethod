@@ -77,10 +77,17 @@ class SelectionLedgerTest {
             "候选选择必须记台账（按简体归一）",
             "SelectionLedger.record(PinyinEngine.toSimplified(word), pinyin)" in view,
         )
+        // 2026-11-16：追加候选的两处直记已收敛成一条路径 —— 学词统一走 learnChoice →
+        // recordLedgerIfNew（词频先记、门槛判定、再落台账），这里钉住这条收敛点不要再分叉。
         assertTrue(
-            "追加候选要记被点的那一节与合并整词",
-            "SelectionLedger.record(PinyinEngine.toSimplified(pred), predPinyin)" in view &&
-                "SelectionLedger.record(PinyinEngine.toSimplified(fullWord), fullPinyin)" in view,
+            "学词要统一走 learnChoice → recordLedgerIfNew",
+            "recordLedgerIfNew(word, pinyin)" in view &&
+                "PinyinEngine.rememberChoice(word)" in view,
+        )
+        assertTrue(
+            "进台账前必须过收录门槛与「字典已认识」两条判据",
+            "PinyinEngine.isKnownWord(word)" in view &&
+                "PinyinEngine.shouldAdmitUserWord(word, typedKey)" in view,
         )
         assertTrue("敏感输入框仍由 suppressLearning 挡住", "if (suppressLearning) return" in view)
     }
