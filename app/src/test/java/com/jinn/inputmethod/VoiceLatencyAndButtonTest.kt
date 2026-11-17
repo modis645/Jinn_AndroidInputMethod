@@ -1,6 +1,7 @@
 package com.jinn.inputmethod
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -69,14 +70,18 @@ class VoiceLatencyAndButtonTest {
         assertTrue("录了 1 秒以上也算", fn.contains("1_000L"))
     }
 
-    // ── ③ 结束后的等待只算尾巴 ─────────────────────────────────────
+    // ── ③ 预览与上屏分工（准确率优先） ───────────────────────────────
 
     @Test
-    fun `结束只解尾巴不再整段重解`() {
+    fun `预览只解滚动尾巴，上屏只做一次完整解码`() {
         val src = client()
-        assertTrue("录音期间要有分段缓存线程", src.contains("startSegmentLoop"))
-        assertTrue("结束时命中缓存就走尾巴解码", src.contains("isCacheUsable"))
-        assertTrue("缓存句与尾巴按同一条标点规则合并", src.contains("VoiceTailMerge.merge"))
+        assertTrue("录音期间要有预览线程", src.contains("startSegmentLoop"))
+        val preview = TestSources.blockAfter(src, "private fun emitPreview")
+        assertTrue("预览解的是最后一段尾巴", preview.contains("PREVIEW_TAIL_SAMPLES"))
+        assertTrue("预览要节流，别把识别器占满", preview.contains("PREVIEW_MIN_INTERVAL_MS"))
+        val rec = TestSources.blockAfter(src, "override fun recognize")
+        assertTrue("上屏走整段完整解码", rec.contains("decodePcm16(pcm16, withVad = true)"))
+        assertFalse("上屏不许拼分段句（会掉字串字）", rec.contains("VoiceTailMerge"))
     }
 
     @Test
