@@ -42,6 +42,13 @@ internal class VoiceStreamCache(
     private var vad: Vad? = null
     private var speechRms = 1e-5f * 3.981f
 
+    /** 不足一个 window 的残余采样（下一次 append 接上一起喂） */
+    private var pending = FloatArray(0)
+
+    /** 喂给 VAD 的采样数（诊断用：区分「没喂进去」与「喂了但没出段」） */
+    var vadFedSamples = 0
+        private set
+
     /** 追加一段 PCM16（只从 [fromByte] 往后取新音频），返回是否解出了新句子 */
     fun append(pcm16: ByteArray, fromByte: Int): Boolean {
         val to = pcm16.size
@@ -51,9 +58,25 @@ internal class VoiceStreamCache(
         appendSamples(add)
         updateFrames()
         val v = ensureVad() ?: return false
+        // ⚠ 必须按 windowSize（512 采样 = 0.032 秒）整块喂：sherpa 的 Vad 内部按窗口推进，
+        // 任意长度的尾巴会被它留在缓冲里、迟迟不出段 —— 实测表现就是「缓存一直是空的，
+        // 结束退回整段重解，等 70 秒」（用户 2026-11-17 反馈）。
+        val pendingLen = pending.size
+        val total = pendingLen + add.size
+        val usable = (total / WINDOW_SAMPLES) * WINDOW_SAMPLES
+        if (usable <= 0) {
+            pending = add.copyOf()
+            return false
+        }
+        val feed = FloatArray(usable)
+        System.arraycopy(pending, 0, feed, 0, pendingLen)
+        System.arraycopy(add, 0, feed, pendingLen, usable - pendingLen)
+        val rest = FloatArray(total - usable)
+        if (rest.isNotEmpty()) System.arraycopy(add, usable - pendingLen, rest, 0, rest.size)
+        pending = rest
         try {
-            // 单参重载才是公开的（`(samples, sampleRate)` 在 jar 里是 private）
-            v.acceptWaveform(add)
+            v.acceptWaveform(feed)
+            vadFedSamples += feed.size
         } catch (t: Throwable) {
             Diagnostics.w(tag, "分段缓存: VAD 喂音频失败 ${t.javaClass.simpleName}")
             return false
@@ -77,6 +100,15 @@ internal class VoiceStreamCache(
     fun release() {
         runCatching { vad?.release() }
         vad = null
+    }
+
+    /** 诊断一行：喂了多少、解出几句、覆盖到哪（用户报「等太久」时先看这行） */
+    fun statsLine(): String =
+        "喂=${vadFedSamples / VoiceDsp.SAMPLE_RATE}s 句=${texts.size} 覆盖=${coveredSamples / VoiceDsp.SAMPLE_RATE}s"
+
+    private companion object {
+        /** silero 的窗口：512 采样（0.032 秒），必须整块喂，尾数会滞留在内部缓冲里 */
+        const val WINDOW_SAMPLES = 512
     }
 
     // ── 内部 ────────────────────────────────────────────────────
@@ -201,7 +233,6 @@ internal class VoiceStreamCache(
  * 结束时的结果拼接与「分段缓存是否可信」的判据 —— 纯函数，真机不可复现的部分靠它兜住。
  */
 internal object VoiceTailMerge {
-
     /**
      * 缓存句 + 尾巴的合并：与整段解码同一条标点规则（句间补「，」、末句补「。」）。
      */
