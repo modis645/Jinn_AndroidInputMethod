@@ -408,11 +408,15 @@ class JinnIme : InputMethodService() {
     private var focusRequest: AudioFocusRequest? = null
     private val audioFocusListener = AudioManager.OnAudioFocusChangeListener { change ->
         ui.post {
-            // 焦点被抢占（来电/其他应用播音）：停止当前录音，避免冲突与串音
-            if (change == AudioManager.AUDIOFOCUS_LOSS ||
-                change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT
-            ) {
-                if (mode != Mode.NONE) stopRecording(commit = false)
+            // 焦点被抢占（来电/其他应用播音）。
+            // 2026-11-17 用户反馈「说着说着自动结束，已输文字全删」：根因之一就是这里 ——
+            // 一条通知音导致的 AUDIOFOCUS_LOSS_TRANSIENT（短暂让出、随即归还）也会走
+            // stopRecording(commit = false)，把整段录音连同屏上的组合态一起丢掉。
+            // 现在：短暂让出**继续录**（焦点马上回来）；真正失去焦点按「保住用户说的话」收尾。
+            if (change == AudioManager.AUDIOFOCUS_LOSS) {
+                if (mode != Mode.NONE) stopRecording(commit = hasVoiceContent())
+            } else if (change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
+                Diagnostics.i(TAG, "音频焦点短暂让出，录音继续（不丢已说内容）")
             }
         }
     }
@@ -438,6 +442,18 @@ class JinnIme : InputMethodService() {
     private var dictationHeard = false
 
     /**
+     * 这一段到底「有没有用户说的话」：组合态已经写过字（边说边出出过文本）就算听到；
+     * 否则按录音时长兜底（录了 1 秒以上即视为用户在说话）。
+     *
+     * 只用于「中途必须收尾时保住内容」的判定 —— 任何会丢录音的路径都先问它。
+     */
+    private fun hasVoiceContent(): Boolean {
+        if (voiceComposingShown) return true
+        if (voiceStartedAt <= 0L) return false
+        return android.os.SystemClock.elapsedRealtime() - voiceStartedAt > 1_000L
+    }
+
+    /**
      * 静音闸门：自动续说接起来的下一轮，若 [DICTATION_IDLE_MS] 内一句人声都没有，
      * 就收掉会话 —— 否则用户丢下手机，键盘会一轮轮空录到 300 秒上限、白耗电白解码。
      */
@@ -445,7 +461,10 @@ class JinnIme : InputMethodService() {
         if (!dictationSession || dictationHeard) return@Runnable
         Diagnostics.i(TAG, "连续口述: ${DICTATION_IDLE_MS}ms 无人声，收会话")
         dictationSession = false
-        if (mode == Mode.TOGGLE) stopRecording(commit = false)
+        // 只「收会话」，不「作废这一段」：闸门只用于判断用户是不是把手机放下了，
+        // 一旦已经解出过半截字，作废就等于把用户说的话全删（用户 2026-11-17 反馈）。
+        // 有内容照常上屏，确实一句话都没有（空结果）由 handleResult 走 hint_empty。
+        if (mode == Mode.TOGGLE) stopRecording(commit = true)
         setHint(getString(R.string.hint_dictation_idle))
     }
 
@@ -4535,6 +4554,10 @@ class JinnIme : InputMethodService() {
             // 边说边出（2026-11-17 用户要求「至少说完一句可以出一句」）：
             // 中途结果写进组合态，屏上随说随出；最终结果 commitText 会整段覆盖它，不会重复。
             showVoiceComposing(text)
+            // 能解出字就说明确实有人在说：静音闸门立刻撤掉（否则一段长语音里
+            // 电平一直偏低，闸门会在说话途中把整段作废）
+            dictationHeard = true
+            ui.removeCallbacks(dictationIdleStop)
             // 键盘自己的拼音条同步回显：宿主吞掉组合态时用户仍然看得见字
             echoVoiceText(text)
             if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "handleResult: 中途结果 ${message.duration.toInt()}s \"${text.take(40)}\"")
@@ -5221,8 +5244,9 @@ class JinnIme : InputMethodService() {
     /** 首轮的静音闸门放宽一档：用户刚点完键，还要开口 */
     const val DICTATION_FIRST_IDLE_MS = 20_000L
 
-    /** 判「有人声」的电平门限（0..1，MicRecorder 的归一化值） */
-    const val DICTATION_VOICE_LEVEL = 0.35f
+    /** 判「有人声」的电平门限（0..1）。2026-11-17 从 0.35 降到 0.15：Mi 10 上正常说话
+     *  也很难长期超过 0.35，闸门于是误判成「没人说话」并把录音作废。 */
+    const val DICTATION_VOICE_LEVEL = 0.15f
 
         /**
          * 在线后端的单次听写上限：两家单次音频硬上限都是 60 秒，留 2 秒给末帧 / 上传与最终结果。
