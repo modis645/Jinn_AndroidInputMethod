@@ -73,11 +73,23 @@ class VoiceLatencyAndButtonTest {
 
     @Test
     fun `部分解码有音频上限与自适应节拍`() {
-        assertEquals("45 秒的 16k 单声道 PCM16", 45 * 32_000, LocalSenseVoiceClient.PARTIAL_MAX_BYTES)
         val src = client()
         val loop = TestSources.blockAfter(src, "private fun startPartialLoop")
-        assertTrue("超长音频要退出循环", loop.contains("pcm.size > PARTIAL_MAX_BYTES"))
+        assertTrue("45 秒以上要走前缀冻结 + 尾巴增量，不能直接停字", loop.contains("prefixText"))
+        assertTrue("尾巴攒够要折进前缀，单次耗时才有上限", loop.contains("PARTIAL_TAIL_FOLD_BYTES"))
         assertTrue("按上一次耗时歇拍（上一次花 T 就先歇 1.5T）", loop.contains("lastCostMs * 3 / 2"))
+        assertEquals("45 秒的 16k 单声道 PCM16", 45 * 32_000, LocalSenseVoiceClient.PARTIAL_MAX_BYTES)
+        assertEquals("尾巴 20 秒折一次", 20 * 32_000, LocalSenseVoiceClient.PARTIAL_TAIL_FOLD_BYTES)
+    }
+
+    @Test
+    fun `录音缓冲必须容得下长语音整段`() {
+        // 用户 2026-11-17：「长语音点结束后最后几句话被吞掉」—— 根因是 60 秒缓冲上限
+        val need = BufferedBatchAsrClient.MAX_TOGGLE_SECONDS * 32_000
+        assertTrue(
+            "缓冲 ${BufferedBatchAsrClient.MAX_PCM_BYTES}B 必须容下 ${need}B（300 秒）",
+            BufferedBatchAsrClient.MAX_PCM_BYTES > need,
+        )
     }
 
     @Test
