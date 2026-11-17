@@ -23,10 +23,16 @@ internal object VoiceDsp {
     /** 单段最多回补多少帧（3s），防止一口气把整段话都吞进来 */
     const val ONSET_MAX_BACK_FRAMES = 300
 
-    /** 逐 10ms 帧的 RMS（0..1）。不足一帧的尾巴丢掉（对回补判据无影响） */
-    fun frameEnergies(samples: FloatArray): FloatArray {
-        if (FRAME_SAMPLES <= 0 || samples.size < FRAME_SAMPLES) return FloatArray(0)
-        val count = samples.size / FRAME_SAMPLES
+    /**
+     * 逐 10ms 帧的 RMS（0..1），只算前 [length] 个采样。不足一帧的尾巴丢掉。
+     *
+     * 带长度参数是因为录音期间的缓存数组是**预分配**的（容量按需要翻倍），有效数据只在
+     * 前 [length] 个采样里；直接拿整个数组算会把尾部旧数据/零算进来，噪声底判断就偏了。
+     */
+    fun frameEnergies(samples: FloatArray, length: Int = samples.size): FloatArray {
+        val usable = length.coerceIn(0, samples.size)
+        if (FRAME_SAMPLES <= 0 || usable < FRAME_SAMPLES) return FloatArray(0)
+        val count = usable / FRAME_SAMPLES
         val out = FloatArray(count)
         for (f in 0 until count) {
             var sum = 0.0
