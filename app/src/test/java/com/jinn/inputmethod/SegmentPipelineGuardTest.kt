@@ -5,47 +5,49 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 源码守卫：分段缓存必须走「我们自己的帧能量切句」，不许再退回 sherpa 流式 Vad。
+ * 分段链路的源码守卫（2026-11-17 两次真机反馈收口后的定版口径）。
  *
- * 2026-11-17 两轮真机实测给出了同一条结论：预览（录音中）快，结束那一下慢到 70 秒。
- * 前者说明句子本来就能在录音时解好，后者说明结束仍走了整段重解。根因有两处，都已修：
- *  ① 切句依赖 silero 的出段时序（不可控、喂入长度敏感）→ 换成 [EnergySegmenter]；
- *  ② 预览每 0.7 秒把 8 秒尾巴塞进串行识别器 → 结束的最终解码排在它后面。
- * 这两个如果再被改回去，这里必须红。
+ * 定版结构，两条不许被改回去：
+ *  ① **预览**：每拍只解「最后 ≤8 秒」这一条尾巴（8 秒实测 115ms），写进组合态；
+ *  ② **上屏**：结束那一刻对整段音频做一次完整解码（长音频走 ≤10 秒分块），
+ *     不掺任何「录音期间逐句解出来的分段句」。
+ *
+ * 为什么要钉住 ②：2026-11-17 真机证明「分段句拼接」当最终文本会掉字、串字，
+ * 识别准确率明显下降；宁愿多花 1~2 秒分块解码，也不能丢准确率。
  */
 class SegmentPipelineGuardTest {
-
-    private fun cacheSource(): String =
-        TestSources.rawSource("src/main/java/com/jinn/inputmethod/VoiceStreamCache.kt")
 
     private fun clientSource(): String =
         TestSources.rawSource("src/main/java/com/jinn/inputmethod/LocalSenseVoiceClient.kt")
 
     @Test
-    fun `分段缓存的切句必须走帧能量而不依赖流式Vad`() {
-        val src = cacheSource()
-        assertTrue("必须有帧能量切句器", src.contains("EnergySegmenter"))
-        assertFalse("不许再用 sherpa 流式 Vad 切句", src.contains("SileroVadModelConfig"))
-        assertFalse("不许再问 Vad 要段落", src.contains("vad.front()"))
+    fun `上屏只用一次完整解码，不拼分段句`() {
+        val src = clientSource()
+        val rec = TestSources.blockAfter(src, "override fun recognize")
+        assertTrue("必须走整段解码", rec.contains("decodePcm16(pcm16, withVad = true)"))
+        assertFalse("不许拼分段句", rec.contains("VoiceTailMerge"))
+        assertFalse("不许读分段缓存的句子", rec.contains("streamCache"))
     }
 
     @Test
-    fun `预览不许每拍解尾巴`() {
+    fun `预览只解尾巴且节流`() {
         val src = clientSource()
         val fn = TestSources.blockAfter(src, "private fun emitPreview")
-        assertTrue("预览只在还没有缓存句时才补尾巴", fn.contains("cached.isEmpty()"))
-        assertTrue("补尾巴要有最小间隔", fn.contains("PREVIEW_MIN_INTERVAL_MS"))
-        assertTrue("尾巴上限 4 秒", src.contains("PREVIEW_TAIL_SAMPLES = 4 * SAMPLE_RATE"))
+        assertTrue("尾巴长度受 PREVIEW_TAIL_SAMPLES 限制", fn.contains("PREVIEW_TAIL_SAMPLES"))
+        assertTrue("必须节流", fn.contains("PREVIEW_MIN_INTERVAL_MS"))
+        assertTrue("尾巴只解不切句", fn.contains("withVad = false"))
+        assertTrue("8 秒尾巴（实测 115ms）", src.contains("PREVIEW_TAIL_SAMPLES = 8 * SAMPLE_RATE"))
     }
 
     @Test
-    fun `结束瞬间要快照缓存，不许被清掉后退回整段重解`() {
+    fun `单次解码不超过十秒`() {
         val src = clientSource()
-        val fn = TestSources.blockAfter(src, "override fun endTask()")
-        assertTrue("endTask 必须存快照", fn.contains("finishedTexts"))
-        assertTrue("endTask 要记下结束时刻", fn.contains("stoppedAtMs"))
-        val rec = TestSources.blockAfter(src, "override fun recognize")
-        assertTrue("recognize 优先用快照", rec.contains("finishedTexts.ifEmpty"))
+        assertTrue("必须存在分块解码", src.contains("decodeChunked"))
+        assertTrue("必须调用 VoiceChunker", src.contains("VoiceChunker.split"))
+        assertFalse(
+            "decodeSamples 不许单流解整段",
+            TestSources.blockAfter(src, "private fun decodeSamples").contains("acceptWaveform(samples, SAMPLE_RATE)"),
+        )
     }
 
     @Test
