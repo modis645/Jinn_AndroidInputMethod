@@ -96,6 +96,10 @@ internal class LocalSenseVoiceClient(
     /** 上一次预览解尾巴的时刻（节流，避免占满串行识别器） */
     private var lastPreviewDecodeAt = 0L
 
+    /** 上一次预览解码的耗时（自适应节拍用：慢机器上就少解几次，别占满 CPU） */
+    @Volatile
+    private var lastPreviewCostMs = 0L
+
     override fun beginTask(): String? {
         val id = super.beginTask() ?: return null
         stoppedAtMs = 0L
@@ -153,7 +157,10 @@ internal class LocalSenseVoiceClient(
      */
     private fun emitPreview(taskId: String, totalBytes: Int) {
         val now = System.currentTimeMillis()
-        if (now - lastPreviewDecodeAt < PREVIEW_MIN_INTERVAL_MS) return
+        // 自适应节拍：真实解码速度因机器而异（真机实测 8 秒尾巴 2400ms，RTF≈0.3）。
+        // 固定 1.2 秒一拍会让预览线程一直饱和，最终解码只能去抢锁 —— 所以按「上次耗时 ×2」歇拍。
+        val intervalMs = maxOf(PREVIEW_MIN_INTERVAL_MS, lastPreviewCostMs * 2)
+        if (now - lastPreviewDecodeAt < intervalMs) return
         lastPreviewDecodeAt = now
         val tailSamples = PREVIEW_TAIL_SAMPLES
         val fromSample = maxOf(0, totalBytes / 2 - tailSamples)
@@ -163,6 +170,7 @@ internal class LocalSenseVoiceClient(
         val text = runCatching { decodeSamples(tailFloats, withVad = false) }
             .getOrNull().orEmpty().trim()
         if (text.isEmpty()) return
+        lastPreviewCostMs = System.currentTimeMillis() - t0
         Diagnostics.i(
             tag,
             "预览 音频=${totalBytes / 2 / SAMPLE_RATE}s 尾巴=${tailFloats.size / SAMPLE_RATE}s " +
@@ -425,8 +433,14 @@ internal class LocalSenseVoiceClient(
         /** 预览节拍：1.2 秒一拍（实测解 8 秒尾巴只要 ~115ms，节流只为不占住串行识别器） */
         const val PREVIEW_MIN_INTERVAL_MS = 1_200L
 
-        /** 预览尾巴长度：8 秒（连续上下文够模型认出整句，代价 ~115ms） */
-        const val PREVIEW_TAIL_SAMPLES = 8 * SAMPLE_RATE
+        /**
+         * 预览尾巴长度：6 秒。
+         *
+         * 真机实测这台机器 RTF≈0.30（8 秒尾巴 2400ms），预览解一次就要 2 秒多；
+         * 尾巴给到 8 秒会让预览线程长期占满 CPU，最终解码只能去抢锁。
+         * 6 秒仍够模型听出整句（SenseVoice 的中文短句 3~5 秒足够），代价降到 1.8 秒左右。
+         */
+        const val PREVIEW_TAIL_SAMPLES = 6 * SAMPLE_RATE
 
         /** 视为「这句话已经说完」的字符：出现它就不要再补标点 */
     
@@ -460,7 +474,7 @@ internal class LocalSenseVoiceClient(
                         tokens = tokens.absolutePath,
                         // 回到 2 线程：v88 提到 4 后用户反馈「比之前还慢」——
                         // int8 量化模型在手机大核上 2 线程已经够，多线程反而抢 CPU / 掉频。
-                        numThreads = 2,
+                        numThreads = 4,
                         debug = false,
                         provider = "cpu",
                     ),
