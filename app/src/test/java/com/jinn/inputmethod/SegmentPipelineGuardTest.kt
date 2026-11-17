@@ -37,6 +37,7 @@ class SegmentPipelineGuardTest {
         assertTrue("必须节流", fn.contains("PREVIEW_MIN_INTERVAL_MS"))
         assertTrue("尾巴只解不切句", fn.contains("withVad = false"))
         assertTrue("6 秒尾巴（RTF 0.30 下约 1.8 秒）", src.contains("PREVIEW_TAIL_SAMPLES = 6 * SAMPLE_RATE"))
+    }
 
     @Test
     fun `预览节拍必须随实际耗时自适应`() {
