@@ -254,16 +254,44 @@ internal class LocalSenseVoiceClient(
             null
         }
         if (segmented != null) return segmented
-        return synchronized(lock) {
-            val stream = recognizer.createStream()
-            try {
-                stream.acceptWaveform(samples, SAMPLE_RATE)
-                recognizer.decode(stream)
-                recognizer.getResult(stream).text
-            } finally {
-                stream.release()
-            }
+        return decodeChunked(recognizer, samples)
+    }
+
+    /**
+     * **任何一次 decode 都不超过 10 秒**。
+     *
+     * 真机日志（2026-11-17）反证过：同样一条识别器，8 秒尾巴 115ms，106.68 秒单流 92 527ms。
+     * 超长单流解码在手机上会崩，所以长音频先按 [VoiceChunker] 切块（尽量切在静音处），
+     * 逐块解完再按句间逗号拼接。106 秒 → 11 块，按 8 秒 115ms 的实测速度只需 1~2 秒。
+     */
+    private fun decodeChunked(recognizer: OfflineRecognizer, samples: FloatArray): String {
+        val frameRms = frameEnergies(samples)
+        val speechRms = if (frameRms.isEmpty()) 0f else {
+            val sorted = frameRms.sortedArray()
+            maxOf(sorted[(sorted.size - 1) / 10], 1e-5f) * 3.981f
         }
+        val chunks = VoiceChunker.split(samples, frameRms, speechRms)
+        val pieces = ArrayList<String>(chunks.size)
+        for (chunk in chunks) {
+            val piece = synchronized(lock) {
+                runCatching {
+                    val stream = recognizer.createStream()
+                    try {
+                        stream.acceptWaveform(samples.copyOfRange(chunk.first, chunk.last + 1), SAMPLE_RATE)
+                        recognizer.decode(stream)
+                        recognizer.getResult(stream).text.trim()
+                    } finally {
+                        stream.release()
+                    }
+                }.getOrNull().orEmpty()
+            }
+            if (piece.isNotEmpty()) pieces.add(piece)
+        }
+        Diagnostics.i(
+            tag,
+            "分块解码: 音频=${samples.size / SAMPLE_RATE.toFloat()}s 块=${chunks.size} 出句=${pieces.size}",
+        )
+        return if (pieces.isEmpty()) "" else VoiceText.joinSentences(pieces)
     }
 
     /**
