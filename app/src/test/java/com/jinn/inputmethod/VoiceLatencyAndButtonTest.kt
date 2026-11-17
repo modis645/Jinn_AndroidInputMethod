@@ -69,17 +69,14 @@ class VoiceLatencyAndButtonTest {
         assertTrue("录了 1 秒以上也算", fn.contains("1_000L"))
     }
 
-    // ── ③ 部分解码给最终结果让路 ─────────────────────────────────────
+    // ── ③ 结束后的等待只算尾巴 ─────────────────────────────────────
 
     @Test
-    fun `部分解码有音频上限与自适应节拍`() {
+    fun `结束只解尾巴不再整段重解`() {
         val src = client()
-        val loop = TestSources.blockAfter(src, "private fun startPartialLoop")
-        assertTrue("45 秒以上要走前缀冻结 + 尾巴增量，不能直接停字", loop.contains("prefixText"))
-        assertTrue("尾巴攒够要折进前缀，单次耗时才有上限", loop.contains("PARTIAL_TAIL_FOLD_BYTES"))
-        assertTrue("按上一次耗时歇拍（上一次花 T 就先歇 1.5T）", loop.contains("lastCostMs * 3 / 2"))
-        assertEquals("45 秒的 16k 单声道 PCM16", 45 * 32_000, LocalSenseVoiceClient.PARTIAL_MAX_BYTES)
-        assertEquals("尾巴 20 秒折一次", 20 * 32_000, LocalSenseVoiceClient.PARTIAL_TAIL_FOLD_BYTES)
+        assertTrue("录音期间要有分段缓存线程", src.contains("startSegmentLoop"))
+        assertTrue("结束时命中缓存就走尾巴解码", src.contains("isCacheUsable"))
+        assertTrue("缓存句与尾巴按同一条标点规则合并", src.contains("VoiceTailMerge.merge"))
     }
 
     @Test
