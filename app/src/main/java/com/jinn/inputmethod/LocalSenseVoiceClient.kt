@@ -54,14 +54,19 @@ internal class LocalSenseVoiceClient(
         }
         val started = System.currentTimeMillis()
         val totalSamples = pcm16.size / 2
-        val cache = streamCache
+        val gateMs = if (stoppedAtMs > 0) started - stoppedAtMs else -1L
+        // 优先用「结束瞬间的快照」；没有快照才看活着的缓存
+        val cached = finishedTexts.ifEmpty { streamCache?.texts?.toList().orEmpty() }
+        val covered = if (finishedTexts.isNotEmpty()) finishedCovered else streamCache?.coveredSamples ?: 0
+        val stats = if (finishedStats.isNotEmpty()) finishedStats else streamCache?.statsLine().orEmpty()
+        Diagnostics.i(
+            tag,
+            "结束→解码 间隔=${gateMs}ms 音频=${totalSamples / SAMPLE_RATE}s 快照句=${finishedTexts.size}",
+        )
         val text = runCatching {
-            val cached = cache?.texts?.toList().orEmpty()
             // 方案三：录音期间已把「说完的句子」解好，这里只补最后那段尾巴
-            if (cache != null &&
-                VoiceTailMerge.isCacheUsable(cached.size, cache.coveredSamples, totalSamples)
-            ) {
-                val tailFloats = pcm16ToFloat(pcm16, cache.coveredSamples, totalSamples)
+            if (VoiceTailMerge.isCacheUsable(cached.size, covered, totalSamples)) {
+                val tailFloats = pcm16ToFloat(pcm16, covered, totalSamples)
                 val tailText = if (tailFloats.size >= MIN_TAIL_SAMPLES) {
                     decodeSamples(tailFloats, withVad = false)
                 } else {
@@ -69,16 +74,14 @@ internal class LocalSenseVoiceClient(
                 }
                 Diagnostics.i(
                     tag,
-                    "分段缓存命中: 句=${cached.size} 覆盖=${cache.coveredSamples / SAMPLE_RATE}s/" +
-                        "${totalSamples / SAMPLE_RATE}s 尾巴=${tailFloats.size / SAMPLE_RATE}s " +
-                        cache.statsLine(),
+                    "分段缓存命中: 句=${cached.size} 覆盖=${covered / SAMPLE_RATE}s/" +
+                        "${totalSamples / SAMPLE_RATE}s 尾巴=${tailFloats.size / SAMPLE_RATE}s $stats",
                 )
                 VoiceTailMerge.merge(cached, tailText)
             } else {
                 Diagnostics.i(
                     tag,
-                    "分段缓存未命中（句=${cached.size} 覆盖=${cache?.coveredSamples ?: 0}/$totalSamples " +
-                        "${cache?.statsLine().orEmpty()}），退回整段解码",
+                    "分段缓存未命中（句=${cached.size} 覆盖=$covered/$totalSamples $stats），退回整段解码",
                 )
                 decodePcm16(pcm16, withVad = true)
             }
@@ -92,6 +95,8 @@ internal class LocalSenseVoiceClient(
                 "耗时=${System.currentTimeMillis() - started}ms 字数=${text.length}",
         )
         releaseStreamCache()
+        finishedTexts = emptyList()
+        finishedStats = ""
         return BatchOutcome.Ok(finishText(text))
     }
 
@@ -107,14 +112,37 @@ internal class LocalSenseVoiceClient(
     private var segmentThread: Thread? = null
     private var streamCache: VoiceStreamCache? = null
 
+    /** 结束瞬间的缓存快照（最终解码只认它，避免缓存被清后整段重解） */
+    private var finishedTexts: List<String> = emptyList()
+    private var finishedCovered = 0
+    private var finishedTotal = 0
+    private var finishedStats = ""
+    private var stoppedAtMs = 0L
+
+    /** 上一次「救急预览」解尾巴的时刻 */
+    private var lastPreviewDecodeAt = 0L
+
     override fun beginTask(): String? {
         val id = super.beginTask() ?: return null
+        finishedTexts = emptyList()
+        finishedStats = ""
+        stoppedAtMs = 0L
         startSegmentLoop(id)
         return id
     }
 
     override fun endTask(): Boolean {
         stopSegmentLoop()
+        // 关键：结束的这一刻把缓存**快照下来**。之后即使缓存被释放（重复点结束、
+        // 取消、下一次 beginTask 覆盖），最终解码拿到的仍是这一场的句子，
+        // 不会退回「整段 200 秒重解 → 等 70 秒」（用户 2026-11-17 反馈）。
+        streamCache?.let { cache ->
+            finishedTexts = cache.texts.toList()
+            finishedCovered = cache.coveredSamples
+            finishedTotal = pcmByteCount() / 2
+            finishedStats = cache.statsLine()
+        }
+        stoppedAtMs = System.currentTimeMillis()
         return super.endTask()
     }
 
@@ -139,7 +167,6 @@ internal class LocalSenseVoiceClient(
         releaseStreamCache()
         segmentStop = false
         val cache = VoiceStreamCache(
-            vadPath = LocalAsrModel.vadFile(prefs.context),
             recognizer = { recognizerFor(prefs.context) },
             lock = lock,
             tag = tag,
@@ -159,8 +186,12 @@ internal class LocalSenseVoiceClient(
                 val chunk = snapshotPcm16(fedBytes)
                 fedBytes = total
                 val t0 = System.currentTimeMillis()
-                runCatching { cache.append(chunk, 0) }
-                    .onFailure { Diagnostics.w(tag, "分段缓存异常 ${it.javaClass.simpleName}: ${it.message}") }
+                runCatching {
+                    cache.append(chunk, 0)
+                    cache.flushDecoded()
+                }.onFailure {
+                    Diagnostics.w(tag, "分段缓存异常 ${it.javaClass.simpleName}: ${it.message}")
+                }
                 emitPreview(taskId, cache, total, System.currentTimeMillis() - t0)
             }
         }.apply {
@@ -172,14 +203,27 @@ internal class LocalSenseVoiceClient(
         thread.start()
     }
 
-    /** 「边说边出」：缓存句 + 未成句尾巴的预览，写进组合态（最终 commit 会整段覆盖） */
+    /**
+     * 「边说边出」的预览：**只拿缓存句子**，不再每拍解尾巴。
+     *
+     * 原先每 0.7 秒就把 8 秒尾巴送进同一个（串行加锁的）识别器，识别器一直被预览占着，
+     * 结束时的最终解码只能排在后面 —— 说话越久排队越久，正是「结束等 70 秒」的来源。
+     * 现在预览零解码成本；只有「还没解出第一句」时，才每 2 秒补一次 ≤4 秒尾巴，
+     * 让用户一开口就有反应。
+     */
     private fun emitPreview(taskId: String, cache: VoiceStreamCache, totalBytes: Int, cost: Long) {
         val cached = cache.texts.toList()
-        val tail = cache.tailSamples(PREVIEW_TAIL_SAMPLES)
-        val tailText = if (tail.size >= MIN_TAIL_SAMPLES) {
-            runCatching { decodeSamples(tail, withVad = false) }.getOrNull().orEmpty()
-        } else {
-            ""
+        var tailText = ""
+        if (cached.isEmpty()) {
+            val now = System.currentTimeMillis()
+            if (now - lastPreviewDecodeAt >= PREVIEW_MIN_INTERVAL_MS) {
+                val tail = cache.tailSamples(PREVIEW_TAIL_SAMPLES)
+                if (tail.size >= MIN_TAIL_SAMPLES) {
+                    lastPreviewDecodeAt = now
+                    tailText = runCatching { decodeSamples(tail, withVad = false) }
+                        .getOrNull().orEmpty()
+                }
+            }
         }
         val text = if (cached.isEmpty() && tailText.isBlank()) {
             ""
@@ -406,8 +450,11 @@ internal class LocalSenseVoiceClient(
         /** 少于 0.25 秒的尾巴不值得解（预览与结束解码同一判据） */
         const val MIN_TAIL_SAMPLES = SAMPLE_RATE / 4
 
-        /** 「边说边出」预览最多带 8 秒尾巴，耗时有上限 */
-        const val PREVIEW_TAIL_SAMPLES = 8 * SAMPLE_RATE
+        /** 「还没解出第一句」时的预览尾巴上限：4 秒（够看到开口反应，又不会占住识别器） */
+        const val PREVIEW_TAIL_SAMPLES = 4 * SAMPLE_RATE
+
+        /** 预览解尾巴的最小间隔：2 秒（识别器是串行的，救急预览不能太勤） */
+        const val PREVIEW_MIN_INTERVAL_MS = 2_000L
 
         /** 视为「这句话已经说完」的字符：出现它就不要再补标点 */
     
