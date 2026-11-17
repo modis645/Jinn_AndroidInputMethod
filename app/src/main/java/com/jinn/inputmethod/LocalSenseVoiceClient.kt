@@ -106,6 +106,10 @@ internal class LocalSenseVoiceClient(
             // 上一次部分解码的耗时与起跑时刻：用来决定下一次什么时候解
             var lastCostMs = 0L
             var lastStartAt = 0L
+            // 长录音的增量方案：前 45 秒照旧整段解；超过之后**前缀冻结**，
+            // 每次只解新增的尾巴，尾巴攒到 20 秒再折进前缀 —— 单次解码耗时有上限。
+            var prefixText: String? = null
+            var prefixBytes = 0
             while (!partialStop) {
                 try {
                     Thread.sleep(PARTIAL_INTERVAL_MS)
@@ -122,16 +126,41 @@ internal class LocalSenseVoiceClient(
                 // （用户 2026-11-17：「出几个字后就慢了」）。现在改成**按上一次耗时歇拍**：
                 // 上一次花了 T 毫秒就先歇 1.5T 再解，字仍然在往前走，CPU 也不会一直占着。
                 if (lastCostMs > 0 && System.currentTimeMillis() - lastStartAt < lastCostMs * 3 / 2) continue
-                if (pcm.size > PARTIAL_MAX_BYTES) {
-                    Diagnostics.i(tag, "边说边出: 音频超过 ${PARTIAL_MAX_BYTES / 32000}s，把 CPU 全让给最终结果")
-                    return@Thread
-                }
                 lastBytes = pcm.size
                 lastStartAt = System.currentTimeMillis()
                 val t0 = lastStartAt
-                val text = runCatching { decodePcm16(pcm, withVad = false) }
-                    .onFailure { Diagnostics.w(tag, "部分解码异常 ${it.javaClass.simpleName}: ${it.message}") }
-                    .getOrNull()
+                val text: String?
+                if (pcm.size <= PARTIAL_MAX_BYTES) {
+                    // 45 秒以内：整段解一次（标准路径，质量最好）
+                    text = runCatching { decodePcm16(pcm, withVad = false) }
+                        .onFailure { Diagnostics.w(tag, "部分解码异常 ${it.javaClass.simpleName}: ${it.message}") }
+                        .getOrNull()
+                } else {
+                    // 45 秒以上：前缀冻结 + 只解尾巴。原先这里直接 return（停字），
+                    // 用户看到的是「说了几句之后就没有新字了」。
+                    if (prefixText == null) {
+                        val full = runCatching { decodePcm16(pcm, withVad = false) }
+                            .onFailure { Diagnostics.w(tag, "部分解码异常 ${it.javaClass.simpleName}: ${it.message}") }
+                            .getOrNull()
+                        if (full != null) {
+                            prefixText = full.trim()
+                            prefixBytes = pcm.size
+                        }
+                        text = full
+                    } else {
+                        val tail = snapshotPcm16(prefixBytes)
+                        if (tail.size < PARTIAL_MIN_BYTES) continue
+                        val tailText = runCatching { decodePcm16(tail, withVad = false) }
+                            .onFailure { Diagnostics.w(tag, "尾巴解码异常 ${it.javaClass.simpleName}: ${it.message}") }
+                            .getOrNull()
+                        // 尾巴攒到 20 秒就折进前缀：下一轮只解新的一小段，耗时不增长
+                        if (!tailText.isNullOrBlank() && tail.size >= PARTIAL_TAIL_FOLD_BYTES) {
+                            prefixText = (prefixText.orEmpty() + tailText).trim()
+                            prefixBytes = pcm.size
+                        }
+                        text = tailText?.let { (prefixText.orEmpty() + it).trim() }
+                    }
+                }
                 Diagnostics.i(
                     tag,
                     "部分解码 音频=${pcm.size / 2 / SAMPLE_RATE.toFloat()}s " +
@@ -340,8 +369,11 @@ internal class LocalSenseVoiceClient(
         /** 缓冲每多 0.5 秒才再解一次 */
         const val PARTIAL_STEP_BYTES = 8000
 
-        /** 部分解码只在 45 秒以内跑：再长单次解码就要好几秒，节拍跟不上说话的节奏 */
+        /** 45 秒以内整段解；超过后改走「前缀冻结 + 尾巴增量」 */
         const val PARTIAL_MAX_BYTES = 45 * 32000
+
+        /** 尾巴攒到 20 秒就折进前缀，保证单次解码耗时有上限 */
+        const val PARTIAL_TAIL_FOLD_BYTES = 20 * 32000
 
         /** 视为「这句话已经说完」的字符：出现它就不要再补标点 */
     
