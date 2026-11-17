@@ -70,13 +70,15 @@ internal class LocalSenseVoiceClient(
                 Diagnostics.i(
                     tag,
                     "分段缓存命中: 句=${cached.size} 覆盖=${cache.coveredSamples / SAMPLE_RATE}s/" +
-                        "${totalSamples / SAMPLE_RATE}s 尾巴=${tailFloats.size / SAMPLE_RATE}s",
+                        "${totalSamples / SAMPLE_RATE}s 尾巴=${tailFloats.size / SAMPLE_RATE}s " +
+                        cache.statsLine(),
                 )
                 VoiceTailMerge.merge(cached, tailText)
             } else {
                 Diagnostics.i(
                     tag,
-                    "分段缓存未命中（句=${cached.size} 覆盖=${cache?.coveredSamples ?: 0}），退回整段解码",
+                    "分段缓存未命中（句=${cached.size} 覆盖=${cache?.coveredSamples ?: 0}/$totalSamples " +
+                        "${cache?.statsLine().orEmpty()}），退回整段解码",
                 )
                 decodePcm16(pcm16, withVad = true)
             }
