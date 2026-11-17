@@ -74,9 +74,6 @@ internal class LocalSenseVoiceClient(
             "离线解码完成 音频=${totalSamples / SAMPLE_RATE.toFloat()}s " +
                 "耗时=${System.currentTimeMillis() - started}ms 字数=${text.length}",
         )
-        releaseStreamCache()
-        finishedTexts = emptyList()
-        finishedStats = ""
         return BatchOutcome.Ok(finishText(text))
     }
 
