@@ -36,7 +36,15 @@ class SegmentPipelineGuardTest {
         assertTrue("尾巴长度受 PREVIEW_TAIL_SAMPLES 限制", fn.contains("PREVIEW_TAIL_SAMPLES"))
         assertTrue("必须节流", fn.contains("PREVIEW_MIN_INTERVAL_MS"))
         assertTrue("尾巴只解不切句", fn.contains("withVad = false"))
-        assertTrue("8 秒尾巴（实测 115ms）", src.contains("PREVIEW_TAIL_SAMPLES = 8 * SAMPLE_RATE"))
+        assertTrue("6 秒尾巴（RTF 0.30 下约 1.8 秒）", src.contains("PREVIEW_TAIL_SAMPLES = 6 * SAMPLE_RATE"))
+
+    @Test
+    fun `预览节拍必须随实际耗时自适应`() {
+        // 固定 1.2 秒一拍 → 慢机器上预览线程永远饱和，最终解码抢不到 CPU
+        val src = clientSource()
+        val fn = TestSources.blockAfter(src, "private fun emitPreview")
+        assertTrue("节拍要按上次耗时 ×2 歇拍", fn.contains("lastPreviewCostMs * 2"))
+        assertTrue("并保留下限", fn.contains("PREVIEW_MIN_INTERVAL_MS"))
     }
 
     @Test
@@ -51,7 +59,8 @@ class SegmentPipelineGuardTest {
     }
 
     @Test
-    fun `识别器仍然是 2 线程`() {
-        assertTrue(clientSource().contains("numThreads = 2"))
+    fun `识别器用 4 线程`() {
+        // 110 秒音频的解码总账 ≈ RTF×时长（真机实测 RTF 0.30），并行度是唯一能直接缩短它的旋钮
+        assertTrue(clientSource().contains("numThreads = 4"))
     }
 }
