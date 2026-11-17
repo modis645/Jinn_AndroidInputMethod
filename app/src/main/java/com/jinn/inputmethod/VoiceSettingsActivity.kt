@@ -371,22 +371,13 @@ class VoiceSettingsActivity : ComponentActivity() {
             }
 
             ready -> {
-                val vad = if (LocalAsrModel.hasVad(this)) {
-                    "分句模型已就绪"
-                } else {
-                    "分句模型缺失（长句整段识别，不影响使用）"
-                }
-                // 输入法没启用时语音键根本不会被调用 —— 这是「模型明明在、语音用不了」
-                // 最常见的真因（2026-11-16 诊断日志: enabled=false ready=false）
-                val imeHint = if (isImeEnabledHere()) {
-                    ""
-                } else {
-                    "\n注意：输入法当前未启用（或未被选为当前输入法），语音键不会工作"
-                }
+                // 用户 2026-11-17：「模型下载安装后文字只保留」两条 ——
+                // 第一行是本机离线识别的定位，第二行是「模型已就绪。」。
+                // 占用体积 / 存放路径 / 存储自检 / 日志尾巴一律不再堆在这张卡片上。
+                // 唯一保留的补充：输入法没启用时语音键根本不会被调用（这是
+                // 「模型明明在、语音用不了」最常见的真因），且仍然只占一行。
                 textLocalAsrStatus.text =
-                    "模型已就绪（占用 ${used / (1024 * 1024)} MB）\n$vad\n" +
-                        "存放在应用数据目录，清理缓存不会删；只有卸载或点「删除模型」才会消失\n" +
-                        storageSelfCheckLine() + imeHint
+                    if (isImeEnabledHere()) TEXT_LOCAL_ASR_READY else TEXT_LOCAL_ASR_READY_DISABLED
                 progressLocalAsr.visibility = View.GONE
                 btnLocalAsrDownload.text = TEXT_LOCAL_ASR_DELETE
                 btnLocalAsrDelete.visibility = View.GONE
@@ -407,9 +398,9 @@ class VoiceSettingsActivity : ComponentActivity() {
                 btnLocalAsrDelete.visibility = View.GONE
             }
         }
-        // 日志尾部直接摆在卡片里：用户「没反应」时截一张图，就能看出卡在哪个源、
-        // 是 DNS、403、还是校验不过。就绪后也留着上一段日志（用户反馈「下载完日志就没了」）
-        val tail = LocalAsrDownloader.logTail(this, if (ready) 4 else 12)
+        // 日志尾部只在「还没就绪」时摆出来：用户「没反应」时截一张图就能看出卡在哪个源。
+        // 就绪后卡片上只留两行字（2026-11-17 定稿）。
+        val tail = if (ready) "" else LocalAsrDownloader.logTail(this, 12)
         if (tail.isEmpty()) {
             textLocalAsrLog.visibility = View.GONE
         } else {
@@ -749,10 +740,12 @@ class VoiceSettingsActivity : ComponentActivity() {
         /** 总开关卡片的标题（用户点名的那一句，逐字保留） */
         const val TEXT_VOICE_MASTER_TITLE = "启用离线语音（本机识别，不联网）"
 
-        /** 本机离线识别：模型不随包，按需下载 */
-        const val TEXT_LOCAL_ASR_DESC = "本机离线识别：不联网、不需要任何 Key。" +
-            "首次使用要在本机下载 SenseVoice small（整句识别，约 163 MB 压缩包 / 落地 230 MB 级），" +
-            "松手后一次性解码，长句会有零点几秒到一两秒的滞后。"
+        /** 用户 2026-11-17 定稿的一句话，不要再加解释性后缀 */
+        const val TEXT_LOCAL_ASR_DESC = "本机离线识别：不联网、不需要任何 Key。"
+        /** 就绪态只需这一句：占用多少、存在哪、日志尾巴都不再展示（用户点名只保留两行字） */
+        const val TEXT_LOCAL_ASR_READY = "模型已就绪。"
+        /** 就绪但输入法没启用：仍然两行，只在这一行里补一句真因 */
+        const val TEXT_LOCAL_ASR_READY_DISABLED = "模型已就绪（输入法当前未启用，语音键不会工作）。"
         const val TEXT_LOCAL_ASR_IMPORT = "从本地导入模型"
         const val TEXT_LOCAL_ASR_DOWNLOAD = "下载模型"
         const val TEXT_LOCAL_ASR_CANCEL = "取消下载"
