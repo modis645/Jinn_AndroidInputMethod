@@ -5,7 +5,6 @@ import android.os.Looper
 import okhttp3.Call
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import java.io.ByteArrayOutputStream
 import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
@@ -66,7 +65,7 @@ abstract class BufferedBatchAsrClient(
     private val idleRunnable = Runnable { onIdleCloseDue() }
 
     /** 本次缓冲的 PCM16（float32→PCM16 已转换，见 [sendChunk]） */
-    private val pcm = ByteArrayOutputStream()
+    private val pcm = PcmBuffer()
 
     /** 正在收音频的任务 */
     @Volatile
@@ -194,17 +193,16 @@ abstract class BufferedBatchAsrClient(
     }
 
     /** 当前缓冲的 PCM16 快照（部分识别用；返回副本，调用方可自由持有） */
-    protected fun snapshotPcm16(): ByteArray = synchronized(pcm) { pcm.toByteArray() }
+    protected fun snapshotPcm16(): ByteArray = synchronized(pcm) { pcm.copy() }
 
     /**
      * 只取 [from] 之后的尾巴（长录音的部分识别用）：整段缓冲已有 2~10 MB，
      * 每解一次都复制整段毫无意义 —— 「边说边出」追加的只是新的那几秒。
      */
-    protected fun snapshotPcm16(from: Int): ByteArray = synchronized(pcm) {
-        val all = pcm.toByteArray()
-        val start = from.coerceIn(0, all.size)
-        if (start == 0) all else all.copyOfRange(start, all.size)
-    }
+    protected fun snapshotPcm16(from: Int): ByteArray = synchronized(pcm) { pcm.copy(from, pcm.size()) }
+
+    /** 当前缓冲的字节数：录音分段缓存按它算「还有多少新音频」 */
+    protected fun pcmByteCount(): Int = synchronized(pcm) { pcm.size() }
 
     /** 是否仍在收音频：部分识别的循环按它决定继续还是退出 */
     protected fun isCapturing(): Boolean = taskId != null
@@ -227,7 +225,7 @@ abstract class BufferedBatchAsrClient(
         val id = taskId ?: return false
         taskId = null
         val data = synchronized(pcm) {
-            val bytes = pcm.toByteArray()
+            val bytes = pcm.copy()
             pcm.reset()
             bytes
         }
@@ -397,6 +395,39 @@ abstract class BufferedBatchAsrClient(
         // 异常正文可能带请求 URL / 头（见 [SpeechErrorText]）：先刮凭据再截断，截断在后才不会
         // 把 `client_secret=` 这种键名留下、值被切在 60 字之后反而看不出来
         else -> SpeechErrorText.scrub(t.message)?.take(60) ?: textFailed
+    }
+
+    /**
+     * 自管理的 PCM16 缓冲（原来用 [java.io.ByteArrayOutputStream]）。
+     *
+     * 换掉的唯一理由：分段缓存每 0.5~1 秒都要从「上一次读到的位置」往后取新音频，
+     * 而 `ByteArrayOutputStream.toByteArray()` 每次都要把整段（最长 10 MB）复制一遍。
+     * 自己管一个数组后，取一段只是 `copyOfRange`，代价与新增音频长度成正比。
+     */
+    protected class PcmBuffer {
+        private var buf = ByteArray(1 shl 16)
+        private var len = 0
+
+        fun size(): Int = len
+
+        fun reset() {
+            len = 0
+        }
+
+        fun write(src: ByteArray) {
+            val need = len + src.size
+            if (need > buf.size) buf = buf.copyOf(maxOf(need, buf.size * 2))
+            System.arraycopy(src, 0, buf, len, src.size)
+            len = need
+        }
+
+        fun copy(): ByteArray = buf.copyOfRange(0, len)
+
+        fun copy(from: Int, to: Int): ByteArray {
+            val a = from.coerceIn(0, len)
+            val b = to.coerceIn(a, len)
+            return buf.copyOfRange(a, b)
+        }
     }
 
     // internal（原 private）：缓冲上限与长语音秒数是「最后几句被吞」的判据，单测要直接钉住
