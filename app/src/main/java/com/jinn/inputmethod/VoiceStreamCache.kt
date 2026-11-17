@@ -43,7 +43,7 @@ internal class VoiceStreamCache(
     private var speechRms = 1e-5f * 3.981f
 
     /** 不足一个 window 的残余采样（下一次 append 接上一起喂） */
-    private var pending = FloatArray(0)
+    private val feeder = WindowFeeder(VAD_WINDOW_SAMPLES)
 
     /** 喂给 VAD 的采样数（诊断用：区分「没喂进去」与「喂了但没出段」） */
     var vadFedSamples = 0
@@ -60,27 +60,16 @@ internal class VoiceStreamCache(
         val v = ensureVad() ?: return false
         // ⚠ 必须按 windowSize（512 采样 = 0.032 秒）整块喂：sherpa 的 Vad 内部按窗口推进，
         // 任意长度的尾巴会被它留在缓冲里、迟迟不出段 —— 实测表现就是「缓存一直是空的，
-        // 结束退回整段重解，等 70 秒」（用户 2026-11-17 反馈）。
-        val pendingLen = pending.size
-        val total = pendingLen + add.size
-        val usable = (total / WINDOW_SAMPLES) * WINDOW_SAMPLES
-        if (usable <= 0) {
-            pending = add.copyOf()
-            return false
+        // 结束退回整段重解，等 70 秒」（用户 2026-11-17 反馈）。分块数学见 [WindowFeeder]。
+        val fed = feeder.feed(add) { chunk ->
+            try {
+                v.acceptWaveform(chunk)
+                vadFedSamples += chunk.size
+            } catch (t: Throwable) {
+                Diagnostics.w(tag, "分段缓存: VAD 喂音频失败 ${t.javaClass.simpleName}")
+            }
         }
-        val feed = FloatArray(usable)
-        System.arraycopy(pending, 0, feed, 0, pendingLen)
-        System.arraycopy(add, 0, feed, pendingLen, usable - pendingLen)
-        val rest = FloatArray(total - usable)
-        if (rest.isNotEmpty()) System.arraycopy(add, usable - pendingLen, rest, 0, rest.size)
-        pending = rest
-        try {
-            v.acceptWaveform(feed)
-            vadFedSamples += feed.size
-        } catch (t: Throwable) {
-            Diagnostics.w(tag, "分段缓存: VAD 喂音频失败 ${t.javaClass.simpleName}")
-            return false
-        }
+        if (fed <= 0) return false
         return drain(v)
     }
 
@@ -104,11 +93,12 @@ internal class VoiceStreamCache(
 
     /** 诊断一行：喂了多少、解出几句、覆盖到哪（用户报「等太久」时先看这行） */
     fun statsLine(): String =
-        "喂=${vadFedSamples / VoiceDsp.SAMPLE_RATE}s 句=${texts.size} 覆盖=${coveredSamples / VoiceDsp.SAMPLE_RATE}s"
+        "喂=${vadFedSamples / VoiceDsp.SAMPLE_RATE}s 滞留=${feeder.pending}采样 " +
+            "句=${texts.size} 覆盖=${coveredSamples / VoiceDsp.SAMPLE_RATE}s"
 
     private companion object {
         /** silero 的窗口：512 采样（0.032 秒），必须整块喂，尾数会滞留在内部缓冲里 */
-        const val WINDOW_SAMPLES = 512
+        const val WINDOW_SAMPLES = VAD_WINDOW_SAMPLES
     }
 
     // ── 内部 ────────────────────────────────────────────────────
@@ -253,5 +243,61 @@ internal object VoiceTailMerge {
         if (count <= 0) return false
         if (totalSamples <= 0) return false
         return coveredSamples >= totalSamples / 3
+    }
+}
+
+/** silero 的窗口长度（采样数）：`VadModelConfig.sileroVadModelConfig.windowSize` 也是它 */
+internal const val VAD_WINDOW_SAMPLES = 512
+
+/**
+ * 把任意长度的采样攒成 [window] 的整数倍，再一次性交给 sink。
+ *
+ * 为什么单独抽出来：silero 的 Vad 按 window 推进，喂进去的尾数会滞留在它的内部缓冲里，
+ * 迟迟吐不出语音段 —— 表现就是「缓存一直是空的、结束退回整段解码、等 70 秒」。
+ * 这段分块数学是纯账本，可以在 JVM 单测里穷举验证「不丢采样、不乱喂」，不用真机试。
+ */
+internal class WindowFeeder(private val window: Int = VAD_WINDOW_SAMPLES) {
+
+    init {
+        require(window > 0) { "window 必须为正" }
+    }
+
+    private var rest = FloatArray(0)
+
+    /** 还没喂出去的残余采样数（永远 < window） */
+    val pending: Int get() = rest.size
+
+    /**
+     * 喂入 [samples]，按 window 整数倍切块交给 [sink]。
+     * 返回本次真正交给 sink 的采样数（0 表示还不够一个 window）。
+     */
+    fun feed(samples: FloatArray, sink: (FloatArray) -> Unit): Int {
+        if (samples.isEmpty()) return 0
+        val total = rest.size + samples.size
+        val usable = (total / window) * window
+        if (usable <= 0) {
+            rest = concat(rest, samples)
+            return 0
+        }
+        val out = FloatArray(usable)
+        System.arraycopy(rest, 0, out, 0, rest.size)
+        System.arraycopy(samples, 0, out, rest.size, usable - rest.size)
+        val leftSize = total - usable
+        rest = if (leftSize > 0) {
+            val left = FloatArray(leftSize)
+            System.arraycopy(samples, usable - rest.size, left, 0, leftSize)
+            left
+        } else {
+            FloatArray(0)
+        }
+        sink(out)
+        return usable
+    }
+
+    private fun concat(a: FloatArray, b: FloatArray): FloatArray {
+        val out = FloatArray(a.size + b.size)
+        System.arraycopy(a, 0, out, 0, a.size)
+        System.arraycopy(b, 0, out, a.size, b.size)
+        return out
     }
 }
