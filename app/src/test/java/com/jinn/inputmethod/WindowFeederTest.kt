@@ -90,7 +90,7 @@ class WindowFeederTest {
     fun `窗口取 512 与 silero 配置一致`() {
         // sileroVadModelConfig(windowSize = 512) —— 两边必须同一个数，否则一段都不出
         assertEquals(512, VAD_WINDOW_SAMPLES)
-        val src = TestSources.rawSource("app/src/main/java/com/jinn/inputmethod/VoiceStreamCache.kt")
+        val src = TestSources.rawSource("src/main/java/com/jinn/inputmethod/VoiceStreamCache.kt")
         assertTrue("分段缓存必须走 WindowFeeder", src.contains("WindowFeeder(VAD_WINDOW_SAMPLES)"))
     }
 }
