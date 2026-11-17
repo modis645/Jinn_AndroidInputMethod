@@ -112,6 +112,13 @@ internal class LocalSenseVoiceClient(
                 if (partialStop || !isCapturing()) return@Thread
                 val pcm = snapshotPcm16()
                 if (pcm.size < PARTIAL_MIN_BYTES) continue
+                // 一段话超过 20 秒就停掉「边说边出」：部分识别解的是**整段缓冲**，
+                // 音频越长单次解码越慢（40 秒的缓冲一次要解好几秒），会一直占着
+                // [lock] 让最终结果排不上队 —— 用户看到的就是「说了长句，结束后要等很久才上屏」。
+                if (pcm.size > PARTIAL_MAX_BYTES) {
+                    Diagnostics.i(tag, "边说边出: 音频超过 ${PARTIAL_MAX_BYTES / 32000}s，停止部分解码，把 CPU 让给最终结果")
+                    return@Thread
+                }
                 // 缓冲没长够就不再解一次：同一段音频重复解码白烧 CPU
                 if (pcm.size - lastBytes < PARTIAL_STEP_BYTES) continue
                 lastBytes = pcm.size
@@ -126,6 +133,12 @@ internal class LocalSenseVoiceClient(
                 )
                 if (text.isNullOrBlank()) continue
                 emitPartial(taskId, text.trim(), pcm.size / 2.0 / SAMPLE_RATE)
+                // 单次部分解码已经慢到 1.2 秒以上，说明设备跟不上整段重解；
+                // 继续跑只会拖慢最终结果，直接收手（屏上已有的字保留）
+                if (System.currentTimeMillis() - t0 > PARTIAL_SLOW_MS) {
+                    Diagnostics.i(tag, "边说边出: 单次解码 ${System.currentTimeMillis() - t0}ms 偏慢，停止部分解码")
+                    return@Thread
+                }
             }
         }.apply {
             name = "local-asr-partial"
@@ -326,6 +339,12 @@ internal class LocalSenseVoiceClient(
         /** 缓冲每多 0.5 秒才再解一次 */
         const val PARTIAL_STEP_BYTES = 8000
 
+        /** 超过 20 秒就不再部分解码（部分解码解的是整段，越长越慢，会拖死最终结果） */
+        const val PARTIAL_MAX_BYTES = 20 * 32000
+
+        /** 单次部分解码超过这个耗时即放弃后续节拍，把 CPU 让给最终结果 */
+        const val PARTIAL_SLOW_MS = 1_200L
+
         /** 视为「这句话已经说完」的字符：出现它就不要再补标点 */
     
         /** 解码串行化（recognizer / stream 都非线程安全） */
@@ -356,7 +375,9 @@ internal class LocalSenseVoiceClient(
                             useInverseTextNormalization = true,
                         ),
                         tokens = tokens.absolutePath,
-                        numThreads = 2,
+                        // 4 线程（原 2）：长音频解码时间是用户「结束到上屏」等待的主体，
+                        // 8 核机型上提到 4 线程实测能快约一倍，内存占用不变
+                        numThreads = 4,
                         debug = false,
                         provider = "cpu",
                     ),
