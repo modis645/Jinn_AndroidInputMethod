@@ -275,6 +275,7 @@ internal class LocalSenseVoiceClient(
      */
     private fun splitByVad(recognizer: OfflineRecognizer, samples: FloatArray, vadPath: File): String? =
         runCatching {
+            val vadStart = System.currentTimeMillis()
             val vad = Vad(
                 config = VadModelConfig(
                     sileroVadModelConfig = SileroVadModelConfig(
@@ -316,7 +317,16 @@ internal class LocalSenseVoiceClient(
             var prevEnd = 0
             synchronized(lock) {
                 try {
-                    vad.acceptWaveform(samples)
+                    // ⚠ 必须按小窗口分段喂：一次性把 100 多秒音频交给 silero，它只处理开头
+                    // 一小截（真机日志 2026-11-17：106.68 秒音频「句数=1 覆盖=1%」），
+                    // 后果是分句、句间标点全丢，还得退回整段硬解。
+                    val chunkSamples = VAD_WINDOW_SAMPLES * 5
+                    var off = 0
+                    while (off < samples.size) {
+                        val n = minOf(chunkSamples, samples.size - off)
+                        vad.acceptWaveform(samples.copyOfRange(off, off + n))
+                        off += n
+                    }
                     vad.flush()
                     while (!vad.empty()) {
                         val segment = vad.front()
@@ -359,7 +369,7 @@ internal class LocalSenseVoiceClient(
             Diagnostics.i(
                 tag,
                 "VAD 分句: 音频=${samples.size / SAMPLE_RATE.toFloat()}s 句数=$pieces " +
-                    "覆盖=${(coverage * 100).toInt()}%",
+                    "覆盖=${(coverage * 100).toInt()}% 耗时=${System.currentTimeMillis() - vadStart}ms",
             )
             // ── 关键：覆盖不足就**不信 VAD** ──
             // 实测（2026-11-16 用户诊断包）：7~9 秒的正常说话，VAD 只切出一句、覆盖率极低，
