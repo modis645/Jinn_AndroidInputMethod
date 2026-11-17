@@ -95,9 +95,9 @@ class VoiceLatencyAndButtonTest {
     }
 
     @Test
-    fun `最终解码线程数保持 2`() {
-        val src = client()
-        assertTrue("int8 模型 2 线程已够，4 线程反而抢核掉频", src.contains("numThreads = 2"))
+    fun `最终解码用 4 线程`() {
+        // 实测 RTF 0.30（8 秒尾巴 2400ms）：长文的总账只能靠并行度缩短
+        assertTrue(client(), client().contains("numThreads = 4"))
     }
 
     // ── ② 一个按钮三态 ──────────────────────────────────────────────
