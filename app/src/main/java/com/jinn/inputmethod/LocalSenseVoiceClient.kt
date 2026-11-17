@@ -103,6 +103,9 @@ internal class LocalSenseVoiceClient(
         partialStop = false
         val thread = Thread {
             var lastBytes = 0
+            // 上一次部分解码的耗时与起跑时刻：用来决定下一次什么时候解
+            var lastCostMs = 0L
+            var lastStartAt = 0L
             while (!partialStop) {
                 try {
                     Thread.sleep(PARTIAL_INTERVAL_MS)
@@ -112,17 +115,20 @@ internal class LocalSenseVoiceClient(
                 if (partialStop || !isCapturing()) return@Thread
                 val pcm = snapshotPcm16()
                 if (pcm.size < PARTIAL_MIN_BYTES) continue
-                // 一段话超过 20 秒就停掉「边说边出」：部分识别解的是**整段缓冲**，
-                // 音频越长单次解码越慢（40 秒的缓冲一次要解好几秒），会一直占着
-                // [lock] 让最终结果排不上队 —— 用户看到的就是「说了长句，结束后要等很久才上屏」。
-                if (pcm.size > PARTIAL_MAX_BYTES) {
-                    Diagnostics.i(tag, "边说边出: 音频超过 ${PARTIAL_MAX_BYTES / 32000}s，停止部分解码，把 CPU 让给最终结果")
-                    return@Thread
-                }
                 // 缓冲没长够就不再解一次：同一段音频重复解码白烧 CPU
                 if (pcm.size - lastBytes < PARTIAL_STEP_BYTES) continue
+                // 自适应节拍：部分解码解的是**整段缓冲**，音频越长单次越慢。
+                // v88 曾用「超过 20 秒就停」止住 CPU 抢占，代价是长语音中途不再出字
+                // （用户 2026-11-17：「出几个字后就慢了」）。现在改成**按上一次耗时歇拍**：
+                // 上一次花了 T 毫秒就先歇 1.5T 再解，字仍然在往前走，CPU 也不会一直占着。
+                if (lastCostMs > 0 && System.currentTimeMillis() - lastStartAt < lastCostMs * 3 / 2) continue
+                if (pcm.size > PARTIAL_MAX_BYTES) {
+                    Diagnostics.i(tag, "边说边出: 音频超过 ${PARTIAL_MAX_BYTES / 32000}s，把 CPU 全让给最终结果")
+                    return@Thread
+                }
                 lastBytes = pcm.size
-                val t0 = System.currentTimeMillis()
+                lastStartAt = System.currentTimeMillis()
+                val t0 = lastStartAt
                 val text = runCatching { decodePcm16(pcm, withVad = false) }
                     .onFailure { Diagnostics.w(tag, "部分解码异常 ${it.javaClass.simpleName}: ${it.message}") }
                     .getOrNull()
@@ -131,14 +137,9 @@ internal class LocalSenseVoiceClient(
                     "部分解码 音频=${pcm.size / 2 / SAMPLE_RATE.toFloat()}s " +
                         "耗时=${System.currentTimeMillis() - t0}ms 字数=${text?.length ?: -1}",
                 )
+                lastCostMs = System.currentTimeMillis() - t0
                 if (text.isNullOrBlank()) continue
                 emitPartial(taskId, text.trim(), pcm.size / 2.0 / SAMPLE_RATE)
-                // 单次部分解码已经慢到 1.2 秒以上，说明设备跟不上整段重解；
-                // 继续跑只会拖慢最终结果，直接收手（屏上已有的字保留）
-                if (System.currentTimeMillis() - t0 > PARTIAL_SLOW_MS) {
-                    Diagnostics.i(tag, "边说边出: 单次解码 ${System.currentTimeMillis() - t0}ms 偏慢，停止部分解码")
-                    return@Thread
-                }
             }
         }.apply {
             name = "local-asr-partial"
@@ -339,11 +340,8 @@ internal class LocalSenseVoiceClient(
         /** 缓冲每多 0.5 秒才再解一次 */
         const val PARTIAL_STEP_BYTES = 8000
 
-        /** 超过 20 秒就不再部分解码（部分解码解的是整段，越长越慢，会拖死最终结果） */
-        const val PARTIAL_MAX_BYTES = 20 * 32000
-
-        /** 单次部分解码超过这个耗时即放弃后续节拍，把 CPU 让给最终结果 */
-        const val PARTIAL_SLOW_MS = 1_200L
+        /** 部分解码只在 45 秒以内跑：再长单次解码就要好几秒，节拍跟不上说话的节奏 */
+        const val PARTIAL_MAX_BYTES = 45 * 32000
 
         /** 视为「这句话已经说完」的字符：出现它就不要再补标点 */
     
@@ -375,9 +373,9 @@ internal class LocalSenseVoiceClient(
                             useInverseTextNormalization = true,
                         ),
                         tokens = tokens.absolutePath,
-                        // 4 线程（原 2）：长音频解码时间是用户「结束到上屏」等待的主体，
-                        // 8 核机型上提到 4 线程实测能快约一倍，内存占用不变
-                        numThreads = 4,
+                        // 回到 2 线程：v88 提到 4 后用户反馈「比之前还慢」——
+                        // int8 量化模型在手机大核上 2 线程已经够，多线程反而抢 CPU / 掉频。
+                        numThreads = 2,
                         debug = false,
                         provider = "cpu",
                     ),
