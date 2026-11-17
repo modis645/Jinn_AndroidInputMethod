@@ -443,6 +443,9 @@ internal class LocalSenseVoiceClient(
     internal companion object {
         const val SAMPLE_RATE = 16_000
 
+        /** silero 的窗口（采样）：`windowSize = 512`，整段兜底也按它的整数倍分段喂 */
+        const val VAD_WINDOW_SAMPLES = 512
+
         /** 段首回补参数与帧能量计算都在 [VoiceDsp]，这里只保留对外引用 */
         const val ONSET_ALWAYS_FRAMES = VoiceDsp.ONSET_ALWAYS_FRAMES
         const val ONSET_GAP_FRAMES = VoiceDsp.ONSET_GAP_FRAMES
