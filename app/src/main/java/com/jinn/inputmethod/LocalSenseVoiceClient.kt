@@ -71,7 +71,8 @@ internal class LocalSenseVoiceClient(
         val gateMs = if (stoppedAtMs > 0) started - stoppedAtMs else -1L
         Diagnostics.i(tag, "结束→解码 间隔=${gateMs}ms 音频=${totalSamples / SAMPLE_RATE}s")
 
-        // 1) 停掉流式线程，回收它没走完的最后一拍
+        // 1) 停掉流式线程，回收它没走完的最后一拍；预览同时停手（真机日志里它在收尾时还抢核）
+        closing = true
         stopStreamLoop()
         runCatching { streamThread?.join(STREAM_JOIN_MS) }
         streamThread = null
@@ -85,7 +86,7 @@ internal class LocalSenseVoiceClient(
                 syncSamples(totalSamples)
                 feedVad(totalSamples)
                 synchronized(lock) { vadSession?.flush() }
-                drainSegments(totalSamples)
+                drainClosingSegments(totalSamples)
                 decodeRemainder(totalSamples)
             }.onFailure {
                 Diagnostics.w(tag, "流式收尾异常 ${it.javaClass.simpleName}: ${it.message}")
@@ -134,6 +135,10 @@ internal class LocalSenseVoiceClient(
     @Volatile
     private var lastPreviewCostMs = 0L
 
+    /** 已进入收尾：预览立刻停手，把 CPU 全留给最后一次解码 */
+    @Volatile
+    private var closing = false
+
     /** 录音期间切句用的 VAD（一次任务一个，结束后释放） */
     private var vadSession: Vad? = null
 
@@ -155,6 +160,7 @@ internal class LocalSenseVoiceClient(
         commit.reset()
         samplesBuf = FloatArray(0)
         convertedSamples = 0
+        closing = false
         openVad()
         startStreamLoop(id)
         return id
@@ -290,11 +296,63 @@ internal class LocalSenseVoiceClient(
         }
     }
 
+    /**
+     * 收尾专用：把 VAD 里剩下的句子全部取出、解掉，与录音期唯一的不同是
+     * **最后一段的右边界延伸到音频末尾**。
+     *
+     * 真机日志（2026-11-17，v99）反证：8.94 秒音频切出 2 句后还剩 0.306 秒零头，
+     * 这 0.306 秒被单独解出 5 个字（`残留补解 音频=0.306s 字数=5`）——用户看到的
+     * 「最后几个字是乱码 / 被吞」。根因是 silero 的段尾本来就裁掉了尾部低能量，
+     * 剩下的零头里没有一句完整的话，单独送模型只能瞎猜。收尾时后面不会再有语音，
+     * 所以把最后一段推到最后是安全的：零头并回最后一句，不再单解。
+     */
+    private fun drainClosingSegments(totalSamples: Int) {
+        val vad = vadSession ?: return
+        val closed = ArrayList<Pair<Int, Int>>()
+        synchronized(lock) {
+            while (!vad.empty()) {
+                val segment = vad.front()
+                closed.add(Pair(segment.start, segment.samples.size))
+                vad.pop()
+            }
+        }
+        if (closed.isEmpty()) return
+        val frames = VoiceDsp.frameEnergies(samplesBuf, totalSamples)
+        val speechRms = speechRmsOf(frames)
+        for ((index, segment) in closed.withIndex()) {
+            val (rawStart, segLength) = segment
+            val segStart = rawStart.coerceIn(0, totalSamples)
+            val rawEnd = (segStart + segLength).coerceAtMost(totalSamples)
+            val segEnd = if (index == closed.lastIndex) {
+                VoiceTailPolicy.extendedEnd(rawEnd, totalSamples)
+            } else {
+                rawEnd
+            }
+            if (segEnd <= commit.consumedSamples) continue
+            if (segLength < SAMPLE_RATE / 5 || segEnd <= segStart) {
+                commit.consume(segEnd - commit.consumedSamples)
+                continue
+            }
+            val pad = VoiceDsp.onsetBacktrack(frames, speechRms, segStart, commit.consumedSamples)
+            val from = if (pad in (commit.consumedSamples + 1) until segStart) pad else segStart
+            val piece = decodePiece(samplesBuf.copyOfRange(from, segEnd))
+            commit.add(piece, segEnd - from)
+            if (piece.isNotEmpty()) VoiceTrace.mark("stream sentence", "chars=${piece.length}")
+        }
+    }
+
     /** 结束时把最后那句残留解掉（≤10 秒一块，绝不整段单流解码） */
     private fun decodeRemainder(totalSamples: Int) {
         val from = commit.consumedSamples.coerceIn(0, totalSamples)
         val remain = totalSamples - from
         if (remain <= MIN_TAIL_SAMPLES) return
+        // 太短的零头单解只会瞎猜（真机：0.306 秒解出 5 个字 = 用户说的「乱码」）。
+        // 真有话没解到时它会因为「最后一段延伸到末尾」被并进上一句，走不到这里。
+        if (!VoiceTailPolicy.shouldDecodeRemainder(remain)) {
+            commit.consume(remain)
+            Diagnostics.i(tag, "残留过短跳过 音频=${remain / SAMPLE_RATE.toFloat()}s")
+            return
+        }
         val slice = samplesBuf.copyOfRange(from, totalSamples)
         val piece = decodeSamples(slice, withVad = false)
         commit.add(piece, remain)
@@ -312,6 +370,7 @@ internal class LocalSenseVoiceClient(
      * 结束时的收尾反而抢不到核。
      */
     private fun emitPreview(taskId: String, totalSamples: Int) {
+        if (closing) return
         val now = System.currentTimeMillis()
         val intervalMs = maxOf(PREVIEW_MIN_INTERVAL_MS, lastPreviewCostMs * 2)
         if (now - lastPreviewDecodeAt < intervalMs) return
