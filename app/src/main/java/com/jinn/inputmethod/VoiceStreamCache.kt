@@ -52,7 +52,8 @@ internal class VoiceStreamCache(
         updateFrames()
         val v = ensureVad() ?: return false
         try {
-            v.acceptWaveform(add, VoiceDsp.SAMPLE_RATE)
+            // 单参重载才是公开的（`(samples, sampleRate)` 在 jar 里是 private）
+            v.acceptWaveform(add)
         } catch (t: Throwable) {
             Diagnostics.w(tag, "分段缓存: VAD 喂音频失败 ${t.javaClass.simpleName}")
             return false
