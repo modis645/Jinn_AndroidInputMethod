@@ -180,14 +180,12 @@ abstract class BufferedBatchAsrClient(
         // 转换在采集线程上做（无锁、纯 CPU），入队瞬时完成，不会卡住麦克风
         val pcm16 = float32ToPcm16(pcmFloat32LittleEndian)
         synchronized(pcm) {
-            // 缓冲上限 60 秒：58 秒自动收尾正常走不到这里（[JinnIme.XF_MAX_TASK_MS]），
-            // 能走到只有一种情况 —— 收尾定时器没了（视图销毁 / 定时器被撤 / 采集停不下来）。
-            // 32 KB/s 无上限地攒最终是 OOM，而 OOM 死的是整个输入法进程。
-            // 丢尾巴保住进程：前半段照样上传、照样能识别出一部分。
+            // 32 KB/s 无上限地攒最终是 OOM，而 OOM 死的是整个输入法进程；
+            // 真到上限（收尾定时器没了、采集停不下来）宁可丢尾巴保进程。
             if (pcm.size() + pcm16.size > MAX_PCM_BYTES) {
                 if (!overflowLogged) {
                     overflowLogged = true
-                    Diagnostics.w(tag, "缓冲到上限($MAX_PCM_BYTES 字节≈60s)，后续音频丢弃")
+                    Diagnostics.w(tag, "缓冲到上限($MAX_PCM_BYTES 字节≈310s)，后续音频丢弃")
                 }
                 return
             }
@@ -197,6 +195,16 @@ abstract class BufferedBatchAsrClient(
 
     /** 当前缓冲的 PCM16 快照（部分识别用；返回副本，调用方可自由持有） */
     protected fun snapshotPcm16(): ByteArray = synchronized(pcm) { pcm.toByteArray() }
+
+    /**
+     * 只取 [from] 之后的尾巴（长录音的部分识别用）：整段缓冲已有 2~10 MB，
+     * 每解一次都复制整段毫无意义 —— 「边说边出」追加的只是新的那几秒。
+     */
+    protected fun snapshotPcm16(from: Int): ByteArray = synchronized(pcm) {
+        val all = pcm.toByteArray()
+        val start = from.coerceIn(0, all.size)
+        if (start == 0) all else all.copyOfRange(start, all.size)
+    }
 
     /** 是否仍在收音频：部分识别的循环按它决定继续还是退出 */
     protected fun isCapturing(): Boolean = taskId != null
@@ -391,16 +399,25 @@ abstract class BufferedBatchAsrClient(
         else -> SpeechErrorText.scrub(t.message)?.take(60) ?: textFailed
     }
 
-    private companion object {
+    // internal（原 private）：缓冲上限与长语音秒数是「最后几句被吞」的判据，单测要直接钉住
+    internal companion object {
         const val TEXT_FAILED = "识别失败"
 
         /**
-         * PCM16 缓冲上限：60 秒 × 16000 Hz × 2 字节 = 1,920,000 字节（≈1.8 MB）。
-         *
-         * 取 60 而不是 58：58 秒是**收尾**点，最后一包音频还要再进来一点。超过它就是收尾没发生，
-         * 此时宁可丢尾巴也不能让裸缓冲一路长到 OOM（WAV 组包时还会再复制一份）。
+         * 长语音键的单次上限（秒），与 [JinnIme.MAX_TOGGLE_MS] 同一口径
          */
-        const val MAX_PCM_BYTES = 60 * 16_000 * 2
+        const val MAX_TOGGLE_SECONDS = 300
+
+        /**
+         * PCM16 缓冲上限（字节）。
+         *
+         * 2026-11-17 真机：「长语音说完点结束，最后几句话被吞掉」——根因就是这里原来写死
+         * 60 秒（1,920,000 字节）：采集端超过 60 秒后整段丢新音频（`sendChunk` 直接 return），
+         * 用户说了 90 秒，后 30 秒根本没进模型。原先写 60 秒的理由是「58 秒自动收尾走不到上限」，
+         * 但到点收尾只是兜底、用户通常早就超过 60 秒。
+         * 现在按 300 秒上限 + 10 秒余量：310 × 16000 × 2 ≈ 9.9 MB，IME 进程完全吃得住。
+         */
+        const val MAX_PCM_BYTES = 310 * 16_000 * 2
 
         /**
          * 上传线程池：**进程级共享**，守护线程。
