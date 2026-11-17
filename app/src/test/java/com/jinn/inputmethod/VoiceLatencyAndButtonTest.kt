@@ -72,19 +72,18 @@ class VoiceLatencyAndButtonTest {
     // ── ③ 部分解码给最终结果让路 ─────────────────────────────────────
 
     @Test
-    fun `部分解码有音频上限与耗时上限`() {
-        assertEquals("20 秒的 16k 单声道 PCM16", 20 * 32_000, LocalSenseVoiceClient.PARTIAL_MAX_BYTES)
-        assertTrue("单次慢解码就收手", LocalSenseVoiceClient.PARTIAL_SLOW_MS in 500L..3_000L)
+    fun `部分解码有音频上限与自适应节拍`() {
+        assertEquals("45 秒的 16k 单声道 PCM16", 45 * 32_000, LocalSenseVoiceClient.PARTIAL_MAX_BYTES)
         val src = client()
         val loop = TestSources.blockAfter(src, "private fun startPartialLoop")
         assertTrue("超长音频要退出循环", loop.contains("pcm.size > PARTIAL_MAX_BYTES"))
-        assertTrue("单次过慢也要退出", loop.contains("PARTIAL_SLOW_MS"))
+        assertTrue("按上一次耗时歇拍（上一次花 T 就先歇 1.5T）", loop.contains("lastCostMs * 3 / 2"))
     }
 
     @Test
-    fun `最终解码线程数已提上去`() {
+    fun `最终解码线程数保持 2`() {
         val src = client()
-        assertTrue("长音频解码是等待主体，线程数应为 4", src.contains("numThreads = 4"))
+        assertTrue("int8 模型 2 线程已够，4 线程反而抢核掉频", src.contains("numThreads = 2"))
     }
 
     // ── ② 一个按钮三态 ──────────────────────────────────────────────
@@ -96,6 +95,16 @@ class VoiceLatencyAndButtonTest {
         assertTrue("有模型时主按钮变成删除", src.contains("btnLocalAsrDownload.text = TEXT_LOCAL_ASR_DELETE"))
         assertTrue("没模型时主按钮是下载", src.contains("btnLocalAsrDownload.text = TEXT_LOCAL_ASR_DOWNLOAD"))
         assertTrue("下载中是取消", src.contains("btnLocalAsrDownload.text = TEXT_LOCAL_ASR_CANCEL"))
+    }
+
+    @Test
+    fun `就绪态只留两行字`() {
+        val src = page()
+        assertTrue("第一行是定位句", src.contains("TEXT_LOCAL_ASR_DESC = \"本机离线识别：不联网、不需要任何 Key。\""))
+        assertTrue("第二行只报就绪", src.contains("TEXT_LOCAL_ASR_READY = \"模型已就绪。\""))
+        val ready = TestSources.blockAfter(src, "ready -> {")
+        assertTrue("就绪后不再堆占用体积", !ready.contains("storageSelfCheckLine()"))
+        assertTrue("就绪后不再堆存放路径说明", !ready.contains("存放在应用数据目录"))
     }
 
     @Test
