@@ -5,33 +5,55 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 分段链路的源码守卫（2026-11-17 两次真机反馈收口后的定版口径）。
+ * 长语音链路的源码守卫（2026-11-17 定版口径）。
  *
- * 定版结构，两条不许被改回去：
- *  ① **预览**：每拍只解「最后 ≤8 秒」这一条尾巴（8 秒实测 115ms），写进组合态；
- *  ② **上屏**：结束那一刻对整段音频做一次完整解码（长音频走 ≤10 秒分块），
- *     不掺任何「录音期间逐句解出来的分段句」。
- *
- * 为什么要钉住 ②：2026-11-17 真机证明「分段句拼接」当最终文本会掉字、串字，
- * 识别准确率明显下降；宁愿多花 1~2 秒分块解码，也不能丢准确率。
+ * 定版结构，这几条不许被改回去：
+ *  ① **录音期间**：按 `window*5` 整块喂同一个 silero，切出闭合句子就立刻解码记进
+ *     [VoiceStreamCommit] —— 解码成本摊在录音过程里；
+ *  ② **结束时**：只解最后那句残留（[LocalSenseVoiceClient] 的 decodeRemainder），
+ *     一次 decode 绝不超过 10 秒；
+ *  ③ **兜底**：流式一句没解出来 / 覆盖不到一半 ⇒ 退回整段解码（宁可慢，不许丢话）；
+ *  ④ 切句与兜底必须**共用同一套 VAD 参数**（newVad 两处调用），否则切点会走两套口径。
  */
 class SegmentPipelineGuardTest {
 
-    private fun clientSource(): String =
+    private fun client(): String =
         TestSources.rawSource("src/main/java/com/jinn/inputmethod/LocalSenseVoiceClient.kt")
 
     @Test
-    fun `上屏只用一次完整解码，不拼分段句`() {
-        val src = clientSource()
+    fun `录音期间就要切句解码`() {
+        val src = client()
+        assertTrue("必须有流式循环", src.contains("startStreamLoop"))
+        assertTrue("必须边喂边取句子", src.contains("drainSegments"))
+        assertTrue("解出来的句子要进台账", src.contains("commit.add(piece"))
+        assertFalse("不许再出现已删除的分段缓存", src.contains("streamCache"))
+    }
+
+    @Test
+    fun `结束只补残留，不整段重解`() {
+        val src = client()
         val rec = TestSources.blockAfter(src, "override fun recognize")
-        assertTrue("必须走整段解码", rec.contains("decodePcm16(pcm16, withVad = true)"))
-        assertFalse("不许拼分段句", rec.contains("VoiceTailMerge"))
-        assertFalse("不许读分段缓存的句子", rec.contains("streamCache"))
+        assertTrue("结束走残留补解", rec.contains("decodeRemainder"))
+        assertTrue("流式不可信才兜底", rec.contains("commit.needsFallback"))
+        val idxStream = rec.indexOf("decodeRemainder")
+        val idxFallback = rec.indexOf("decodePcm16(pcm16, withVad = true)")
+        assertTrue("兜底必须排在流式收尾之后", idxStream >= 0 && idxFallback > idxStream)
+        val rest = TestSources.blockAfter(src, "private fun decodeRemainder")
+        assertTrue("残留也走 ≤10 秒分块", rest.contains("decodeSamples(slice, withVad = false)"))
+    }
+
+    @Test
+    fun `切句与兜底共用同一套 VAD 参数`() {
+        val src = client()
+        assertTrue("必须有统一的 newVad", src.contains("private fun newVad"))
+        assertTrue("录音期切句用它", TestSources.blockAfter(src, "private fun openVad").contains("newVad(vadPath)"))
+        assertTrue("整段兜底也用它", TestSources.blockAfter(src, "private fun splitByVad").contains("newVad(vadPath)"))
+        assertFalse("不许在兜底里另起一套参数", src.contains("maxSpeechDuration = 1e9f"))
     }
 
     @Test
     fun `预览只解尾巴且节流`() {
-        val src = clientSource()
+        val src = client()
         val fn = TestSources.blockAfter(src, "private fun emitPreview")
         assertTrue("尾巴长度受 PREVIEW_TAIL_SAMPLES 限制", fn.contains("PREVIEW_TAIL_SAMPLES"))
         assertTrue("必须节流", fn.contains("PREVIEW_MIN_INTERVAL_MS"))
@@ -41,27 +63,24 @@ class SegmentPipelineGuardTest {
 
     @Test
     fun `预览节拍必须随实际耗时自适应`() {
-        // 固定 1.2 秒一拍 → 慢机器上预览线程永远饱和，最终解码抢不到 CPU
-        val src = clientSource()
+        val src = client()
         val fn = TestSources.blockAfter(src, "private fun emitPreview")
         assertTrue("节拍要按上次耗时 ×2 歇拍", fn.contains("lastPreviewCostMs * 2"))
-        assertTrue("并保留下限", fn.contains("PREVIEW_MIN_INTERVAL_MS"))
     }
 
     @Test
     fun `单次解码不超过十秒`() {
-        val src = clientSource()
+        val src = client()
         assertTrue("必须存在分块解码", src.contains("decodeChunked"))
         assertTrue("必须调用 VoiceChunker", src.contains("VoiceChunker.split"))
         assertFalse(
-            "decodeSamples 不许单流解整段",
-            TestSources.blockAfter(src, "private fun decodeSamples").contains("acceptWaveform(samples, SAMPLE_RATE)"),
+            "decodeChunked 不许单流解整段",
+            TestSources.blockAfter(src, "private fun decodeChunked").contains("acceptWaveform(samples, SAMPLE_RATE)"),
         )
     }
 
     @Test
     fun `识别器用 4 线程`() {
-        // 110 秒音频的解码总账 ≈ RTF×时长（真机实测 RTF 0.30），并行度是唯一能直接缩短它的旋钮
-        assertTrue(clientSource().contains("numThreads = 4"))
+        assertTrue(client().contains("numThreads = 4"))
     }
 }
