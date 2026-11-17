@@ -53,136 +53,152 @@ internal class LocalSenseVoiceClient(
             return BatchOutcome.Fail("离线模型未就绪")
         }
         val started = System.currentTimeMillis()
-        val text = runCatching { decodePcm16(pcm16, withVad = true) }
-            .getOrElse { t ->
-                Diagnostics.w(tag, "离线解码异常 ${t.javaClass.simpleName}: ${t.message}")
-                return BatchOutcome.Fail("离线解码失败")
+        val totalSamples = pcm16.size / 2
+        val cache = streamCache
+        val text = runCatching {
+            val cached = cache?.texts?.toList().orEmpty()
+            // 方案三：录音期间已把「说完的句子」解好，这里只补最后那段尾巴
+            if (cache != null &&
+                VoiceTailMerge.isCacheUsable(cached.size, cache.coveredSamples, totalSamples)
+            ) {
+                val tailFloats = pcm16ToFloat(pcm16, cache.coveredSamples, totalSamples)
+                val tailText = if (tailFloats.size >= MIN_TAIL_SAMPLES) {
+                    decodeSamples(tailFloats, withVad = false)
+                } else {
+                    ""
+                }
+                Diagnostics.i(
+                    tag,
+                    "分段缓存命中: 句=${cached.size} 覆盖=${cache.coveredSamples / SAMPLE_RATE}s/" +
+                        "${totalSamples / SAMPLE_RATE}s 尾巴=${tailFloats.size / SAMPLE_RATE}s",
+                )
+                VoiceTailMerge.merge(cached, tailText)
+            } else {
+                Diagnostics.i(
+                    tag,
+                    "分段缓存未命中（句=${cached.size} 覆盖=${cache?.coveredSamples ?: 0}），退回整段解码",
+                )
+                decodePcm16(pcm16, withVad = true)
             }
+        }.getOrElse { t ->
+            Diagnostics.w(tag, "离线解码异常 ${t.javaClass.simpleName}: ${t.message}")
+            return BatchOutcome.Fail("离线解码失败")
+        }
         Diagnostics.i(
             tag,
-            "离线解码完成 音频=${pcm16.size / 2 / SAMPLE_RATE.toFloat()}s " +
+            "离线解码完成 音频=${totalSamples / SAMPLE_RATE.toFloat()}s " +
                 "耗时=${System.currentTimeMillis() - started}ms 字数=${text.length}",
         )
+        releaseStreamCache()
         return BatchOutcome.Ok(finishText(text))
     }
 
-    // ── 「边说边出」：录音期间每 0.9 秒把当前缓冲解一次，作为组合态回显 ──
+    // ── 分段缓存（2026-11-17「方案三」：录音期间就按 VAD 切句、逐句解好）────────
     //
-    // 为什么是这个做法（2026-11-17 用户反馈「点长语音后一句话都不出，得等结束」）：
-    // SenseVoice 是**整段批量**模型，没有流式接口，但 10 秒以内的音频解一次只要几百毫秒，
-    // 所以按「缓冲变了就再解一次」的方式模拟出流式 —— 用户看到的字落后约 1 秒，
-    // 说完一句就已经在屏上了。最终结果仍然是松手后整段解码，用 commitText 覆盖组合态。
+    // 原先「边说边出」靠每 0.5 秒把整段缓冲重解一遍来模拟流式，音频越长越慢，结束时还要
+    // 再整段重解一次。现在同一条流式 VAD 把「已经说完的句子」当场解出来存住，
+    // 用户点结束只解尾巴 → 上屏等待从「总时长」降到「尾巴长度」。
+    // 上屏方式**没变**：结束仍是一次性 commitText，用户仍可整体改。
 
     @Volatile
-    private var partialStop = true
-    private var partialThread: Thread? = null
+    private var segmentStop = true
+    private var segmentThread: Thread? = null
+    private var streamCache: VoiceStreamCache? = null
 
     override fun beginTask(): String? {
         val id = super.beginTask() ?: return null
-        startPartialLoop(id)
+        startSegmentLoop(id)
         return id
     }
 
     override fun endTask(): Boolean {
-        stopPartialLoop()
+        stopSegmentLoop()
         return super.endTask()
     }
 
     override fun cancelTask(): Boolean {
-        stopPartialLoop()
+        stopSegmentLoop()
+        releaseStreamCache()
         return super.cancelTask()
     }
 
-    private fun stopPartialLoop() {
-        partialStop = true
-        partialThread = null
+    private fun stopSegmentLoop() {
+        segmentStop = true
+        segmentThread = null
     }
 
-    private fun startPartialLoop(taskId: String) {
-        stopPartialLoop()
-        partialStop = false
+    private fun releaseStreamCache() {
+        streamCache?.release()
+        streamCache = null
+    }
+
+    private fun startSegmentLoop(taskId: String) {
+        stopSegmentLoop()
+        releaseStreamCache()
+        segmentStop = false
+        val cache = VoiceStreamCache(
+            vadPath = LocalAsrModel.vadFile(prefs.context),
+            recognizer = { recognizerFor(prefs.context) },
+            lock = lock,
+            tag = tag,
+        )
+        streamCache = cache
         val thread = Thread {
-            var lastBytes = 0
-            // 上一次部分解码的耗时与起跑时刻：用来决定下一次什么时候解
-            var lastCostMs = 0L
-            var lastStartAt = 0L
-            // 长录音的增量方案：前 45 秒照旧整段解；超过之后**前缀冻结**，
-            // 每次只解新增的尾巴，尾巴攒到 20 秒再折进前缀 —— 单次解码耗时有上限。
-            var prefixText: String? = null
-            var prefixBytes = 0
-            while (!partialStop) {
+            var fedBytes = 0
+            while (!segmentStop) {
                 try {
-                    Thread.sleep(PARTIAL_INTERVAL_MS)
+                    Thread.sleep(SEGMENT_INTERVAL_MS)
                 } catch (e: InterruptedException) {
                     return@Thread
                 }
-                if (partialStop || !isCapturing()) return@Thread
-                val pcm = snapshotPcm16()
-                if (pcm.size < PARTIAL_MIN_BYTES) continue
-                // 缓冲没长够就不再解一次：同一段音频重复解码白烧 CPU
-                if (pcm.size - lastBytes < PARTIAL_STEP_BYTES) continue
-                // 自适应节拍：部分解码解的是**整段缓冲**，音频越长单次越慢。
-                // v88 曾用「超过 20 秒就停」止住 CPU 抢占，代价是长语音中途不再出字
-                // （用户 2026-11-17：「出几个字后就慢了」）。现在改成**按上一次耗时歇拍**：
-                // 上一次花了 T 毫秒就先歇 1.5T 再解，字仍然在往前走，CPU 也不会一直占着。
-                if (lastCostMs > 0 && System.currentTimeMillis() - lastStartAt < lastCostMs * 3 / 2) continue
-                lastBytes = pcm.size
-                lastStartAt = System.currentTimeMillis()
-                val t0 = lastStartAt
-                val text: String?
-                if (pcm.size <= PARTIAL_MAX_BYTES) {
-                    // 45 秒以内：整段解一次（标准路径，质量最好）
-                    text = runCatching { decodePcm16(pcm, withVad = false) }
-                        .onFailure { Diagnostics.w(tag, "部分解码异常 ${it.javaClass.simpleName}: ${it.message}") }
-                        .getOrNull()
-                } else {
-                    // 45 秒以上：前缀冻结 + 只解尾巴。原先这里直接 return（停字），
-                    // 用户看到的是「说了几句之后就没有新字了」。
-                    if (prefixText == null) {
-                        val full = runCatching { decodePcm16(pcm, withVad = false) }
-                            .onFailure { Diagnostics.w(tag, "部分解码异常 ${it.javaClass.simpleName}: ${it.message}") }
-                            .getOrNull()
-                        if (full != null) {
-                            prefixText = full.trim()
-                            prefixBytes = pcm.size
-                        }
-                        text = full
-                    } else {
-                        val tail = snapshotPcm16(prefixBytes)
-                        if (tail.size < PARTIAL_MIN_BYTES) continue
-                        val tailText = runCatching { decodePcm16(tail, withVad = false) }
-                            .onFailure { Diagnostics.w(tag, "尾巴解码异常 ${it.javaClass.simpleName}: ${it.message}") }
-                            .getOrNull()
-                        // 尾巴攒到 20 秒就折进前缀：下一轮只解新的一小段，耗时不增长
-                        if (!tailText.isNullOrBlank() && tail.size >= PARTIAL_TAIL_FOLD_BYTES) {
-                            prefixText = (prefixText.orEmpty() + tailText).trim()
-                            prefixBytes = pcm.size
-                        }
-                        text = tailText?.let { (prefixText.orEmpty() + it).trim() }
-                    }
-                }
-                Diagnostics.i(
-                    tag,
-                    "部分解码 音频=${pcm.size / 2 / SAMPLE_RATE.toFloat()}s " +
-                        "耗时=${System.currentTimeMillis() - t0}ms 字数=${text?.length ?: -1}",
-                )
-                lastCostMs = System.currentTimeMillis() - t0
-                if (text.isNullOrBlank()) continue
-                emitPartial(taskId, text.trim(), pcm.size / 2.0 / SAMPLE_RATE)
+                if (segmentStop || !isCapturing()) return@Thread
+                val total = pcmByteCount()
+                if (total - fedBytes < SEGMENT_MIN_NEW_BYTES) continue
+                val chunk = snapshotPcm16(fedBytes)
+                fedBytes = total
+                val t0 = System.currentTimeMillis()
+                runCatching { cache.append(chunk, 0) }
+                    .onFailure { Diagnostics.w(tag, "分段缓存异常 ${it.javaClass.simpleName}: ${it.message}") }
+                emitPreview(taskId, cache, total, System.currentTimeMillis() - t0)
             }
         }.apply {
-            name = "local-asr-partial"
+            name = "local-asr-segments"
             isDaemon = true
             priority = Thread.NORM_PRIORITY - 1
         }
-        partialThread = thread
+        segmentThread = thread
         thread.start()
     }
 
-    /** PCM16 → 文本；部分识别与最终识别共用（部分识别不跑 VAD，省一半时间） */
+    /** 「边说边出」：缓存句 + 未成句尾巴的预览，写进组合态（最终 commit 会整段覆盖） */
+    private fun emitPreview(taskId: String, cache: VoiceStreamCache, totalBytes: Int, cost: Long) {
+        val cached = cache.texts.toList()
+        val tail = cache.tailSamples(PREVIEW_TAIL_SAMPLES)
+        val tailText = if (tail.size >= MIN_TAIL_SAMPLES) {
+            runCatching { decodeSamples(tail, withVad = false) }.getOrNull().orEmpty()
+        } else {
+            ""
+        }
+        val text = if (cached.isEmpty() && tailText.isBlank()) {
+            ""
+        } else {
+            VoiceTailMerge.merge(cached, tailText).trim()
+        }
+        Diagnostics.i(
+            tag,
+            "分段缓存 句=${cached.size} 音频=${totalBytes / 2 / SAMPLE_RATE}s 本拍=${cost}ms 字数=${text.length}",
+        )
+        if (text.isNotEmpty()) emitPartial(taskId, text, totalBytes / 2.0 / SAMPLE_RATE)
+    }
+
+    /** PCM16 → 文本；整段解码（分段缓存不可信时的兜底） */
     private fun decodePcm16(pcm16: ByteArray, withVad: Boolean): String {
         VoiceTrace.mark("first frame", "audio=${pcm16.size / 2 / SAMPLE_RATE.toFloat()}s vad=$withVad")
-        val samples = pcm16ToFloat(pcm16)
+        return decodeSamples(pcm16ToFloat(pcm16), withVad)
+    }
+
+    /** float32 采样 → 文本（尾巴解码 / 预览直接调用，不再来回转 PCM） */
+    private fun decodeSamples(samples: FloatArray, withVad: Boolean): String {
         if (samples.isEmpty()) return ""
         val recognizer = recognizerFor(prefs.context)
         val vadPath = LocalAsrModel.vadFile(prefs.context)
@@ -329,6 +345,25 @@ internal class LocalSenseVoiceClient(
         floorSample: Int,
     ): Int = VoiceDsp.onsetBacktrack(frameRms, speechRms, segStart, floorSample)
 
+    /** 只转 [fromSample]..[toSample) 这一段（尾巴解码用，避免把 10 MB 整段再转一遍） */
+    private fun pcm16ToFloat(pcm16: ByteArray, fromSample: Int, toSample: Int): FloatArray {
+        val from = (fromSample * 2).coerceIn(0, pcm16.size)
+        val to = (toSample * 2).coerceIn(from, pcm16.size)
+        val count = (to - from) / 2
+        if (count <= 0) return FloatArray(0)
+        val out = FloatArray(count)
+        var i = from
+        var j = 0
+        while (j < count && i + 1 < to) {
+            val lo = pcm16[i].toInt() and 0xFF
+            val hi = pcm16[i + 1].toInt()
+            out[j] = ((hi shl 8) or lo) / 32768.0f
+            i += 2
+            j++
+        }
+        return out
+    }
+
     /** PCM16（小端）→ float32 归一化到 [-1,1]；逐采样 1/32768 换算，不做重采样（采集端已是 16k） */
     private fun pcm16ToFloat(pcm16: ByteArray): FloatArray {
         val frames = pcm16.size / 2
@@ -360,20 +395,17 @@ internal class LocalSenseVoiceClient(
         /** 低于这个长度（约 4 秒）不值得走 VAD：切出来的句子和整段解码差别不大 */
         const val MIN_VAD_SAMPLES = 4 * SAMPLE_RATE
 
-        /** 部分识别的节拍与最小步长（越勤越像流式，但每次解码都吃 CPU） */
-        const val PARTIAL_INTERVAL_MS = 600L
+        /** 分段缓存的节拍：0.7 秒一拍，比「整段重解」便宜得多 */
+        const val SEGMENT_INTERVAL_MS = 700L
 
-        /** 少于 0.25 秒的音频不值得解 */
-        const val PARTIAL_MIN_BYTES = 4000
+        /** 新增音频不足 0.2 秒就跳过这一拍 */
+        const val SEGMENT_MIN_NEW_BYTES = 6_400
 
-        /** 缓冲每多 0.5 秒才再解一次 */
-        const val PARTIAL_STEP_BYTES = 8000
+        /** 少于 0.25 秒的尾巴不值得解（预览与结束解码同一判据） */
+        const val MIN_TAIL_SAMPLES = SAMPLE_RATE / 4
 
-        /** 45 秒以内整段解；超过后改走「前缀冻结 + 尾巴增量」 */
-        const val PARTIAL_MAX_BYTES = 45 * 32000
-
-        /** 尾巴攒到 20 秒就折进前缀，保证单次解码耗时有上限 */
-        const val PARTIAL_TAIL_FOLD_BYTES = 20 * 32000
+        /** 「边说边出」预览最多带 8 秒尾巴，耗时有上限 */
+        const val PREVIEW_TAIL_SAMPLES = 8 * SAMPLE_RATE
 
         /** 视为「这句话已经说完」的字符：出现它就不要再补标点 */
     
