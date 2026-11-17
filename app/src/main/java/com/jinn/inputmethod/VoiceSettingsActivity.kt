@@ -172,7 +172,9 @@ class VoiceSettingsActivity : ComponentActivity() {
         progressLocalAsr = findViewById(R.id.progress_local_asr)
         btnLocalAsrDownload = findViewById(R.id.btn_local_asr_download)
         btnLocalAsrDelete = findViewById(R.id.btn_local_asr_delete)
-        btnLocalAsrDelete.text = TEXT_LOCAL_ASR_DELETE
+        // 下载 / 删除合成一个按钮：没模型时是「下载模型」，有模型时是「删除模型」。
+        // 另一个按钮恒隐藏（布局里保留 id，避免动 XML）
+        btnLocalAsrDelete.visibility = View.GONE
         btnLocalAsrImport = findViewById(R.id.btn_local_asr_import)
         btnLocalAsrImport.text = TEXT_LOCAL_ASR_IMPORT
         textLocalAsrLog = findViewById(R.id.text_local_asr_log)
@@ -364,8 +366,8 @@ class VoiceSettingsActivity : ComponentActivity() {
                         "补齐前长句按整段识别，句间标点会少一些\n" +
                         LocalAsrModel.audit(this).line()
                 progressLocalAsr.visibility = View.GONE
-                btnLocalAsrDownload.text = TEXT_LOCAL_ASR_DOWNLOAD
-                btnLocalAsrDelete.visibility = View.VISIBLE
+                btnLocalAsrDownload.text = TEXT_LOCAL_ASR_DELETE
+                btnLocalAsrDelete.visibility = View.GONE
             }
 
             ready -> {
@@ -386,8 +388,8 @@ class VoiceSettingsActivity : ComponentActivity() {
                         "存放在应用数据目录，清理缓存不会删；只有卸载或点「删除模型」才会消失\n" +
                         storageSelfCheckLine() + imeHint
                 progressLocalAsr.visibility = View.GONE
-                btnLocalAsrDownload.text = TEXT_LOCAL_ASR_DOWNLOAD
-                btnLocalAsrDelete.visibility = View.VISIBLE
+                btnLocalAsrDownload.text = TEXT_LOCAL_ASR_DELETE
+                btnLocalAsrDelete.visibility = View.GONE
             }
 
             else -> {
@@ -449,6 +451,13 @@ class VoiceSettingsActivity : ComponentActivity() {
 
     /** 下载按钮：未就绪 = 开下；下载中 = 取消 */
     private fun onLocalAsrDownloadClicked() {
+        // 同一个按钮按状态分三种用途：下载中=取消、已有模型=删除、没有模型=下载
+        if (!LocalAsrDownloader.isRunning() &&
+            (LocalAsrModel.isReady(this) || LocalAsrModel.canRecognize(this))
+        ) {
+            confirmDeleteLocalAsr()
+            return
+        }
         if (LocalAsrDownloader.isRunning()) {
             LocalAsrDownloader.log(this, "用户点了取消")
             localAsrUserCancelled = true
@@ -569,6 +578,20 @@ class VoiceSettingsActivity : ComponentActivity() {
     private fun onLocalAsrDeleteClicked() {
         LocalAsrDownloader.delete(this)
         refreshLocalAsrStatus(0)
+    }
+
+    /** 「删除模型」前的确认：删掉要重下 239MB，属于不可撤销操作 */
+    private fun confirmDeleteLocalAsr() {
+        val usedMb = LocalAsrModel.usedBytes(this) / (1024 * 1024)
+        android.app.AlertDialog.Builder(this)
+            .setTitle("删除离线语音模型？")
+            .setMessage("将删除本机模型（约 $usedMb MB），删除后语音输入不可用，需要重新下载。")
+            .setNegativeButton("取消", null)
+            .setPositiveButton("删除") { _, _ ->
+                LocalAsrDownloader.log(this, "用户点了删除模型")
+                onLocalAsrDeleteClicked()
+            }
+            .show()
     }
 
     // ── 语言 ────────────────────────────────────────────────────
