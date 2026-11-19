@@ -3072,14 +3072,11 @@ object PinyinEngine {
             // [keepCompletionHead] 兑现：组内词频重排不得把学过的单字顶到补全词之前。
             for (w in completionWords) syllableCounts.getOrPut(w) { syllables.size }
             result.addAll(asList)
-            // 3b. 单字前缀联想（原有逻辑，保持；末尾同样取真实末尾音节）。
-            // 与补全词同组登记：末尾残码还没敲完，不该把联想字判进「未登记」组而落到所有
-            // 音节数组之后。组内相对次序仍由 result 的拼装顺序决定（联想字在精确单字之后）。
-            if (realLast != null) {
-                val tailChars = displayTake(charsFor(realLast), MAX_CHARS)
-                for (c in tailChars) syllableCounts.getOrPut(c) { syllables.size }
-                result.addAll(tailChars)
-            }
+            // 3b. 末尾单字联想**已删除**（2026-11-19）。
+            // 旧逻辑：`displayTake(charsFor(realLast))` 把**最后一个音节**的字也堆进候选。
+            // 打 `liuzhixia` 时 `xia` 同时是 xian/xiao/xiang 的合法前缀（`lastIsFakeComplete` 成立），
+            // 于是侠/霞/瑕/狎 全被追加进来 —— 与「未选词只出首音节」的口径冲突，用户实测报「依旧不对」。
+            // 首音节字由 2b 统一供给；残码（partial）的部分仍由下面的 [matchCharsByPrefix] 兜。
             val prefixChars = displayTake(matchCharsByPrefix(partial), MAX_CHARS)
             for (c in prefixChars) syllableCounts.getOrPut(c) { syllables.size }
             result.addAll(prefixChars)

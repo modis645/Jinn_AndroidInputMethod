@@ -5,6 +5,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.io.File
 
 /**
  * 未选词阶段的候选必须是「前缀口径」（2026-11-19，用户实测反馈）。
@@ -67,5 +68,64 @@ class PrefixOnlyCharCandidatesTest {
         val c = PinyinEngine.consumption("zhangmazi", "张麻")
         assertEquals("选「张麻」应消费 zhangma 这 7 个字母", 7, c.quanpinChars)
         assertEquals("zi", "zhangmazi".substring(c.quanpinChars))
+    }
+
+    /**
+     * 用户实测第二轮：`liuzhixia` 仍混出 xia 的字（侠/霞/瑕/狎）。
+     *
+     * 根因是 `query()` 里还有一段「末尾音节单字联想」：`xia` 同时是 xian/xiao/xiang 的合法前缀，
+     * 被 `lastIsFakeComplete` 判定成「残码」，于是把 xia 的整张字表追加到候选尾部。
+     * 这段已删除；这里钉住整串输入（含末尾完整音节、末尾残码两种）都只出首音节的字。
+     */
+    @Test
+    fun `末尾音节的字不得在整串输入时出现`() {
+        PinyinEngine.resetForTest()
+        PinyinEngine.loadFromTexts(
+            chars = listOf(
+                "liu\t刘,陆,六",
+                "zhi\t只,之,知",
+                "xia\t侠,霞,瑕,狎",
+            ).joinToString("\n"),
+            phrases = "",
+            syllables = listOf("liu", "zhi", "xia", "xian", "xiao", "xiang").joinToString("\n"),
+        )
+
+        // 末尾完整音节：xia 也是 xian/xiao 的前缀（旧路径的触发条件）
+        val full = PinyinEngine.query("liuzhixia").candidates
+        assertTrue("首音节字必须出现，实际=$full", full.contains("刘"))
+        for (c in listOf("侠", "霞", "瑕", "狎", "只", "之", "知")) {
+            assertFalse("整串输入不得出现后续音节字 $c，实际=$full", full.contains(c))
+        }
+
+        // 末尾残码：zhi 也不得提前出现（此时用户还没选掉 liu）
+        val withPartial = PinyinEngine.query("liuzhixi").candidates
+        for (c in listOf("只", "之", "知")) {
+            assertFalse("末尾残码阶段不得出现第二音节字 $c，实际=$withPartial", withPartial.contains(c))
+        }
+    }
+
+    /**
+     * 字表口径：`陆` 只保留 `lu` 一路，`liu` 里去掉了。
+     *
+     * 说明：`陆` 确有 `liù`（“六”的大写，账目用），但这是极低频义项；上游字表把 it 排在 liu 第 13 位，
+     * 导致打 `liuzhixia` 首屏就能看到「陆」——用户实测判为错误读音。财务大写场景仍可从 `lu` 取到 `陆`。
+     */
+    @Test
+    fun `字表里陆不再挂在liu下_仍保留在lu下`() {
+        val chars = run {
+            for (p in listOf("src/main/assets/pinyin_chars.txt.xz", "app/src/main/assets/pinyin_chars.txt.xz")) {
+                val f = File(p)
+                if (f.isFile) {
+                    return@run org.tukaani.xz.XZInputStream(f.inputStream()).use {
+                        String(it.readBytes(), Charsets.UTF_8)
+                    }
+                }
+            }
+            error("找不到 pinyin_chars.txt.xz")
+        }
+        val liu = chars.lineSequence().first { it.startsWith("liu\t") }
+        val lu = chars.lineSequence().first { it.startsWith("lu\t") }
+        assertFalse("liu 键里不应再有 陆：$liu", "陆" in liu)
+        assertTrue("lu 键里必须保留 陆：$lu", "陆" in lu)
     }
 }
