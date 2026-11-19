@@ -98,6 +98,7 @@ class UserDictActivity : ComponentActivity() {
     private lateinit var btnExportTxt: Button
     private lateinit var btnImport: Button
     private lateinit var btnClose: Button
+    private lateinit var btnCleanup: Button
 
     /** 当前合并结果（词, 读音, 次数），导出直接用它 */
     @Volatile
@@ -195,6 +196,7 @@ class UserDictActivity : ComponentActivity() {
         btnExportTxt = findViewById(R.id.btn_export_txt)
         btnImport = findViewById(R.id.btn_import_dict)
         btnClose = findViewById(R.id.btn_delete_dict)
+        btnCleanup = findViewById(R.id.btn_cleanup_dict)
 
         // 页面关闭按钮：与其它子页同款（文案只由 PageChrome 定义）
         findViewById<Button>(R.id.btn_dict_close).apply {
@@ -208,6 +210,7 @@ class UserDictActivity : ComponentActivity() {
         btnExportTxt.text = TEXT_EXPORT_TXT
         btnImport.text = TEXT_IMPORT
         btnClose.text = TEXT_CLOSE
+        btnCleanup.text = TEXT_CLEANUP
 
         // 「一键导出」入口（设置页）：进页面后直接开格式选择，不用再找按钮
         autoExportPending = intent?.getBooleanExtra(EXTRA_AUTO_EXPORT, false) == true
@@ -223,6 +226,7 @@ class UserDictActivity : ComponentActivity() {
             }.onFailure { toast(TEXT_NO_PICKER) }
         }
         btnClose.setOnClickListener { confirmCloseStepOne() }
+        btnCleanup.setOnClickListener { askCleanupLowFrequency() }
 
         pendingFormat = savedInstanceState?.getString(KEY_PENDING_FORMAT)
             ?.let { runCatching { SelectionLedger.ExportFormat.valueOf(it) }.getOrNull() }
@@ -457,6 +461,8 @@ class UserDictActivity : ComponentActivity() {
         // 删除不可回滚，而这一屏恰好是「条数不可信」的状态 —— 用户看到 0 条去点它，删掉的是真数据。
         // 解不开时先禁用，恢复后再删（文案另有 TEXT_SUMMARY_UNREADABLE 说明原因）
         btnClose.isEnabled = !unreadable
+        // 清理低频词同样不可回滚，解不开时禁用（与「删除全部」同口径）
+        btnCleanup.isEnabled = !unreadable
     }
 
     private fun bindList() {
@@ -487,6 +493,73 @@ class UserDictActivity : ComponentActivity() {
                         toast(String.format(Locale.US, TEXT_DELETE_OK_TOAST, word))
                         // 删词后要让**候选池**立刻跟着变：自造词索引在引擎里是内存副本，
                         // 只刷页面不刷它，用户删掉的词还能被打出来（2026-11-15 接台账进查询后补的）
+                        runCatching { PinyinEngine.loadUserWords(applicationContext) }
+                        loadAsync()
+                    }
+                    false -> toast(TEXT_DELETE_FAIL)
+                    null -> toast(TEXT_DELETE_UNREADABLE)
+                }
+            }
+        }
+    }
+
+    /**
+     * 清理低频词（2026-11-17 需求）：把「使用频次 < [CLEANUP_THRESHOLD]」的词一次清掉。
+     *
+     * 两段确认：①预览（多选列表，默认全选，可逐条取消）②总账（词数 / 次数 / 不可恢复）。
+     * 只删台账里这些词的记录，其余数据不动；删完立刻刷候选池，被清掉的词不会还留在内存索引里。
+     */
+    private fun askCleanupLowFrequency() {
+        val low = rows.filter { it.count < CLEANUP_THRESHOLD }
+        if (low.isEmpty()) {
+            toast(String.format(Locale.US, TEXT_CLEANUP_NONE, CLEANUP_THRESHOLD))
+            return
+        }
+        val labels = low.map {
+            String.format(Locale.US, TEXT_CLEANUP_ITEM, it.word, it.count)
+        }.toTypedArray()
+        val checked = BooleanArray(low.size) { true }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(TEXT_CLEANUP_TITLE)
+            .setMessage(String.format(Locale.US, TEXT_CLEANUP_BODY, low.size))
+            .setMultiChoiceItems(labels, checked) { _, which, isChecked -> checked[which] = isChecked }
+            .setNegativeButton(TEXT_CANCEL, null)
+            .setPositiveButton(TEXT_CLEANUP_PREVIEW_OK) { _, _ ->
+                val picked = low.filterIndexed { index, _ -> checked[index] }
+                if (picked.isEmpty()) toast(TEXT_CLEANUP_NONE_PICKED) else confirmCleanup(picked)
+            }
+            .create()
+        styleDialogButtons(tracked(dialog))
+        dialog.show()
+    }
+
+    /** 删除前最后一道总账：词数、合计次数、不可恢复；顺带给一个「先导出词表」的出口 */
+    private fun confirmCleanup(picked: List<Row>) {
+        val totalPicks = picked.sumOf { it.count }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(TEXT_CLEANUP_TITLE)
+            .setMessage(String.format(Locale.US, TEXT_CLEANUP_CONFIRM, picked.size, totalPicks))
+            .setNegativeButton(TEXT_CANCEL, null)
+            .setNeutralButton(TEXT_CLEANUP_EXPORT_FIRST) { _, _ ->
+                startExport(SelectionLedger.ExportFormat.TXT)
+            }
+            .setPositiveButton(TEXT_CLEANUP_DELETE) { _, _ ->
+                deleteLowFrequency(picked.map { it.word }.toSet())
+            }
+            .create()
+        styleDialogButtons(tracked(dialog))
+        dialog.show()
+    }
+
+    private fun deleteLowFrequency(words: Set<String>) {
+        io.execute {
+            val ok = SelectionLedger.deleteWords(applicationContext, words)
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                when (ok) {
+                    true -> {
+                        toast(String.format(Locale.US, TEXT_CLEANUP_OK, words.size))
+                        // 同 deleteWord：台账变了，引擎里的自造词索引必须跟着重建
                         runCatching { PinyinEngine.loadUserWords(applicationContext) }
                         loadAsync()
                     }
@@ -1354,6 +1427,22 @@ class UserDictActivity : ComponentActivity() {
     const val TEXT_DELETE_OK_TOAST = "已删除「%s」"
     const val TEXT_DELETE_FAIL = "删除失败（文件可能被占用）"
     const val TEXT_DELETE_UNREADABLE = "台账解不开，暂时不能删除"
+
+    // 清理低频词（2026-11-17）：阈值 6，预览可逐条取消，删前再确认一次
+    const val TEXT_CLEANUP = "清理低频词（少于 6 次）"
+    const val TEXT_CLEANUP_TITLE = "清理低频词"
+    const val TEXT_CLEANUP_BODY = "下面 %d 个词的使用次数都少于 6 次。\n默认全选，要留着哪个就取消勾选；删了不可恢复。"
+    const val TEXT_CLEANUP_ITEM = "%s（%d 次）"
+    const val TEXT_CLEANUP_PREVIEW_OK = "下一步"
+    const val TEXT_CLEANUP_CONFIRM = "将删除 %d 个词、合计 %d 次记录。\n删除不可恢复，建议先导出词表留一份。"
+    const val TEXT_CLEANUP_EXPORT_FIRST = "先导出词表"
+    const val TEXT_CLEANUP_DELETE = "删除这些词"
+    const val TEXT_CLEANUP_OK = "已清理 %d 个低频词"
+    const val TEXT_CLEANUP_NONE = "没有使用次数少于 %d 次的词"
+    const val TEXT_CLEANUP_NONE_PICKED = "一个词都没选，未删除"
+
+    /** 低频词阈值（用户 2026-11-17 定档：6） */
+    private const val CLEANUP_THRESHOLD = 6
     const val TEXT_ENABLE_TITLE = "开启用户词库"
         const val TEXT_ENABLE_OK = "开启"
         const val TEXT_CANCEL = "取消"

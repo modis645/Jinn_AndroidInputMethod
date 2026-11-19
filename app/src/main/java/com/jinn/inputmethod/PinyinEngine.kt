@@ -765,6 +765,9 @@ object PinyinEngine {
             // 简拼首字母索引是从词库派生的：词库一换就必须重建，否则新注入/新加载的短语
             // 永远打不出首字母（旧索引里没有它们的键）
             initialsIndex = null
+            // 字读音表也是从 chars 派生的懒建缓存：换词表必须重建，否则回填用的读音
+            // 仍来自上一份注入（测试里表现为「读音回填返回 null」）
+            charToSyllables = null
             loadCharsText(chars)
             baseIndex = PhraseIndex.of(indexBytes) ?: throw AssertionError("测试索引结构异常")
             loadSyllablesText(syllables)
@@ -815,6 +818,9 @@ object PinyinEngine {
             // 简拼首字母索引是从词库派生的：词库一换就必须重建，否则新注入/新加载的短语
             // 永远打不出首字母（旧索引里没有它们的键）
             initialsIndex = null
+            // 字读音表也是从 chars 派生的懒建缓存：换词表必须重建，否则回填用的读音
+            // 仍来自上一份注入（测试里表现为「读音回填返回 null」）
+            charToSyllables = null
             loadCharsText(chars)
             loadPhrasesText(phrases)
             loadSyllablesText(syllables)
@@ -1949,30 +1955,41 @@ object PinyinEngine {
     /** 某一串输入（含简拼 / 混拼）最近连续命中的是哪个词、连了几次 */
     private class PickStreak(var word: String = "", var count: Int = 0)
 
-    /** 输入串（去分隔符）→ 连击状态。用户可能同时用全拼与简拼，所以按串分开计 */
+    /** 词（简体）→ 连击状态。按**词**计：同一词换拼法仍算连续（2026-11-17 口径） */
     private val pickStreaks = java.util.concurrent.ConcurrentHashMap<String, PickStreak>()
+
+    /** 最近一次选中的词（简体）：换词即断连，只保留「最近这个词」的连击 */
+    @Volatile
+    private var lastPickKey: String? = null
 
     /**
      * 是否够格把 [word] 收进用户词库（主流输入法的两条并列门槛，用户 2026-11-16 指定）。
      *
-     * 1. **连续 3 次**：同一串拼音（全拼 / 简拼 / 混拼都算同一串）连着选中同一个词。
-     *    换一个词就是断连 —— 手抖点错一次不会把词收进去。
-     * 2. **累计 6 次**：同一个词被选中过 6 次（不看输入串，也不要求连续）。
-     *    兜住「每次都用不同拼法（`lzw` / `liuzhiwu`）打同一个词」这种正常用法。
+     * 1. **连续 3 次**：连着选中同一个词。全拼 / 简拼 / 混拼是**同一个词的不同拼法**，
+     *    换拼法不算断连（2026-11-17 修正：原先按键入串计，换拼法连击归零）；
+     *    换一个词才算断连 —— 手抖点错一次不会把词收进去。
+     * 2. **累计 6 次**：同一个词被选中过 6 次（不看拼法，也不要求连续）。
      *
-     * @param typedKey 本次实际的输入串（已去分隔符）；空串（残码结算等时机）时只看累计次数
+     * @param typedKey 本次实际的输入串（已去分隔符）；只用于日志，不再参与连击判定
      */
     fun shouldAdmitUserWord(word: String, typedKey: String): Boolean {
         if (word.isEmpty()) return false
         val key = toSimplified(word)
         val total = pickTotals.merge(key, 1) { a, b -> a + b } ?: 1
-        var streakCount = 0
-        if (typedKey.isNotEmpty()) {
-            val streak = pickStreaks.getOrPut(typedKey) { PickStreak() }
-            synchronized(streak) {
-                if (streak.word == word) streak.count++ else { streak.word = word; streak.count = 1 }
-                streakCount = streak.count
+        val streak: PickStreak
+        synchronized(this) {
+            // 换词 ⇒ 之前的连击全断（「连续」只对最近这一次选中的词成立）。
+            // 只清空不清键表本身：地图很小，且清键会与并发读打架
+            if (lastPickKey != key) {
+                pickStreaks.clear()
+                lastPickKey = key
             }
+            streak = pickStreaks.getOrPut(key) { PickStreak() }
+        }
+        val streakCount: Int
+        synchronized(streak) {
+            if (streak.word == key) streak.count++ else { streak.word = key; streak.count = 1 }
+            streakCount = streak.count
         }
         val admit = streakCount >= ADMIT_STREAK_PICKS || total >= ADMIT_TOTAL_PICKS
         // 门槛判定必须留痕：用户说「打了三次没进词库」时，日志能直接回答是哪条没过
@@ -2000,9 +2017,51 @@ object PinyinEngine {
      */
     fun readingFromTyped(word: String, typedKey: String): String? {
         if (word.isEmpty() || typedKey.isEmpty()) return null
-        val segs = splitSyllables(typedKey.lowercase(java.util.Locale.ROOT)) ?: return null
-        if (segs.size != word.length) return null
-        return segs.joinToString(" ")
+        val typed = typedKey.lowercase(java.util.Locale.ROOT)
+            .replace(SEPARATOR_CHAR.toString(), "")
+        if (typed.isEmpty()) return null
+        // ① 全拼键入：老路径原样保留（`liuzhiwu` → `liu zhi wu`），行为不变
+        val whole = splitSyllables(typed)
+        if (whole != null && whole.size == word.length) return whole.joinToString(" ")
+        // ② 简拼 / 混拼键入（2026-11-17）：允许「单字母段 = 该字音节的首字母」，
+        //    按「打全的音节最多」优先取一种与字数对齐的切法（[segmentationsOf] 已按此排序）。
+        //    单字母段到字读音表里回填真实音节 —— 这样 `lzw` / `lzhiwu` 都能落成 `liu zhi wu`，
+        //    收录后全拼、简拼、混拼三条键路都可命中（原先一律返回 null，收了也是死条目）。
+        val segs = segmentationsOf(typed).firstOrNull { it.size == word.length } ?: return null
+        val out = ArrayList<String>(segs.size)
+        for (i in segs.indices) {
+            val seg = segs[i]
+            val ch = word[i]
+            val readings = syllablesOfChar(ch)
+            val picked = when {
+                // 段是完整音节：必须是这个字的读音之一（错读音宁可不收，也不写进去）
+                seg.length > 1 -> if (readings.isEmpty() || seg in readings) seg else null
+                // 段是单字母：回填为该字以这个字母开头的读音（`m` / `n` 也按首字母处理，
+                // 不能当叹词音节用 —— 那会把「马」记成 `m` 这种打不出来的读音）
+                readings.isEmpty() -> null
+                else -> preferredReadingOf(ch, seg[0])
+            } ?: return null
+            out.add(picked)
+        }
+        return out.joinToString(" ")
+    }
+
+    /**
+     * 多音字回填时挑一个读音：优先「常用读音」（单字在字表/词库里那条），其次读音表里第一个。
+     *
+     * 只接受以 [initial] 开头的读音，且优先多字母音节 —— 单字母零声母音节（a / e / o）
+     * 只有在读音表里就该这么读时才用（例如「饿」= e）。
+     */
+    private fun preferredReadingOf(ch: Char, initial: Char): String? {
+        val readings = syllablesOfChar(ch)
+        val primary = candidateTruePinyin[ch.toString()]
+            ?: candidatePinyin[ch.toString()]
+            ?: wordToPinyin[ch.toString()]
+        val primarySyl = primary?.split(' ')?.firstOrNull { it.isNotEmpty() }
+        if (primarySyl != null && primarySyl.length > 1 && primarySyl[0] == initial) return primarySyl
+        val candidates = readings.filter { it.startsWith(initial) }
+        if (candidates.isEmpty()) return null
+        return candidates.firstOrNull { it.length > 1 } ?: candidates.first()
     }
 
     /** 测试注入：清空自造词、门槛计数与简拼缓存（用例之间不得互相污染） */
@@ -2010,6 +2069,7 @@ object PinyinEngine {
         userWords.clear()
         pickTotals.clear()
         pickStreaks.clear()
+        lastPickKey = null
         synchronized(abbrevCache) { abbrevCache.clear() }
     }
 

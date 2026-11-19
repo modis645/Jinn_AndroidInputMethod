@@ -4743,25 +4743,13 @@ class PinyinKeyboardView @JvmOverloads constructor(
             return
         }
         if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "预测上屏: \"$pred\" (基于 ${lastCommittedWord})")
-        // 用户词频：学习完整词（librime 的 UserDictionary 也是按整条 entry 记），
-        // 这样「你好」+「吗」→ 记「你好吗」，下次打 nihaoma 它就在前面
-        val fullWord = lastCommittedWord + pred
-        val predPinyin = PinyinEngine.truePinyinOf(pred).orEmpty()
-        // 两段读音必须都拿到才拼：缺一段时宁可按「未知」记空，也不写一条截断的错读音
-        val fullPinyin = if (lastCommittedPinyin.isEmpty() || predPinyin.isEmpty()) {
-            // 缺任一段就按未知记空：只写后半截会让「词与音节数对不上」，导进词库直接被丢弃
-            ""
-        } else {
-            "$lastCommittedPinyin $predPinyin"
-        }
+        // 预测词只学「词频」（排序），**不写选择台账**（2026-11-17 口径修正）：
+        // 预测词不是用户从键入候选里挑出来的，它的读音来自预测侧（常常只剩后半截），
+        // 写进词库只会得到「有词无读音」的死条目 —— 那种行永远进不了候选，却把词库页撑满
+        // （用户看到的「词库里一堆打不出来的词」多半就是这条路径留下的）。
+        // 词频照旧按整词记（「你好」+「吗」→「你好吗」，下次打 nihaoma 排在前面）。
         if (!suppressLearning) {
-            // 选择台账记两行：被点的那一节（四海）+ 合并后的整词（五湖四海）。
-            // 词频表仍只学整词（排序语义不变），台账是词库原料，两者分开。
-            recordLedgerIfNew(pred, predPinyin)
-            // 合并词与 pred 相同（没有前一个词）时不再记第二行，否则同一「词+读音」频次翻倍
-            if (fullWord.isNotEmpty() && fullWord != pred) {
-                recordLedgerIfNew(fullWord, fullPinyin)
-            }
+            val fullWord = lastCommittedWord + pred
             PinyinEngine.rememberChoice(fullWord.ifEmpty { pred })
         }
         lastCommittedPinyin = ""

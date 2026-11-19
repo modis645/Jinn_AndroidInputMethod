@@ -293,6 +293,17 @@ class Prefs(private val appContext: Context) {
         set(value) = sp.edit { putBoolean(KEY_USER_DICT_ENABLED, value) }
 
     /**
+     * 诊断日志开关（默认**关**，2026-11-17）。
+     *
+     * 此前 release 包也无条件把 I/W 级日志写到 `getExternalFilesDir/logs/`（还同时打 logcat），
+     * 一天几十兆、长期占盘，用户看不到也关不掉。现在默认不写；开启后行为与本轮改动前一致。
+     * **E 级不受此开关限制**（崩溃仍可查），见 [Diagnostics.log]。
+     */
+    var diagnosticLog: Boolean
+        get() = boolOr(KEY_DIAGNOSTIC_LOG, false)
+        set(value) = sp.edit { putBoolean(KEY_DIAGNOSTIC_LOG, value) }
+
+    /**
      * 候选的智能预测词：选完一个词后，在候选栏预告下一个字词（默认开）。
      *
      * 默认开与幻影拼音的「上屏后联想默认选中」对齐：选完文字立刻有位可点，
@@ -1361,6 +1372,7 @@ class Prefs(private val appContext: Context) {
         put(KEY_SHOW_KEY_HINT, showKeyHint)
         put(KEY_SHOW_QUANPIN, showQuanpin)
         put(KEY_USER_LEARNING, userLearning)
+        put(KEY_DIAGNOSTIC_LOG, diagnosticLog)
         put(KEY_RARE_TIER2, rareTier2)
         put(KEY_RARE_TIER3, rareTier3)
         put(KEY_USE_TRADITIONAL, useTraditional)
@@ -1545,6 +1557,7 @@ class Prefs(private val appContext: Context) {
                 KEY_SHOW_KEY_HINT -> asBool(v)?.let { showKeyHint = it; ok() } ?: bad(key)
                 KEY_SHOW_QUANPIN -> asBool(v)?.let { showQuanpin = it; ok() } ?: bad(key)
                 KEY_USER_LEARNING -> asBool(v)?.let { userLearning = it; ok() } ?: bad(key)
+        KEY_DIAGNOSTIC_LOG -> asBool(v)?.let { diagnosticLog = it; ok() } ?: bad(key)
                 KEY_RARE_TIER2 -> asBool(v)?.let { rareTier2 = it; ok() } ?: bad(key)
                 KEY_RARE_TIER3 -> asBool(v)?.let { rareTier3 = it; ok() } ?: bad(key)
                 KEY_USE_TRADITIONAL -> asBool(v)?.let { useTraditional = it; ok() } ?: bad(key)
@@ -1918,6 +1931,8 @@ class Prefs(private val appContext: Context) {
 
     /** 选择台账开关（默认关；会长期留痕，必须手输 OK 才开） */
     private const val KEY_USER_DICT_ENABLED = "user_dict_enabled"
+    /** 诊断日志开关（默认关；关时 I/W/V 既不落盘也不打 logcat，E 级始终放行） */
+    private const val KEY_DIAGNOSTIC_LOG = "diagnostic_log"
     /** 上次成功检查更新的时刻（epoch ms；0 = 从未成功检查过） */
     private const val KEY_UPDATE_LAST_CHECK_AT = "update_last_check_at"
 

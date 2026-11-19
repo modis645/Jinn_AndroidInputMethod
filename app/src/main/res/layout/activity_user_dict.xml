@@ -83,6 +83,14 @@
         android:layout_weight="1"
         android:overScrollMode="never" />
 
+    <!-- 清理低频词（2026-11-17）：词库页新增，阈值 6 次；弹窗里逐条勾选/取消后再删 -->
+    <Button
+        style="@style/SettingsButton"
+        android:id="@+id/btn_cleanup_dict"
+        android:layout_width="match_parent"
+        android:layout_marginTop="6dp"
+        android:minWidth="0dp" />
+
     <Button
         style="@style/SettingsButton"
         android:id="@+id/btn_delete_dict"

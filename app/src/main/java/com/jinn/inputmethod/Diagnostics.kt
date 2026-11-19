@@ -401,6 +401,10 @@ private const val LOG_SEGMENTS_KEPT = 2
             if (inited) return
             cacheDir = context.applicationContext.cacheDir
             logDir = resolveLogDir(context.applicationContext)
+            // 默认关：日志长期占盘、用户既看不见也关不掉（本轮改动前 release 包也无条件落盘）。
+            // 放在写日志之前，否则下面两条 i() 会被自己的开关丢掉（那正是「默认关」应有的行为，
+            // 但开关打开时仍要能看到目录与设备信息）
+            enabled = runCatching { Prefs(context.applicationContext).diagnosticLog }.getOrDefault(false)
             inited = true
             installCrashHandler()
             cleanupOldLogs()
@@ -585,7 +589,23 @@ private const val LOG_SEGMENTS_KEPT = 2
         return if (total <= MAX_FILE_BODY_CHARS) sb.toString() else sb.toString() + "…(截断，共 $total 字)"
     }
 
+    /**
+     * 诊断日志总开关（默认**关**，2026-11-17）。由 [init] 从 Prefs 读入，设置页拨动时经 [setEnabled] 热更。
+     *
+     * 关闭时：I / W / V 既不落盘也不打 logcat（连字符串都不进日志文件）；**E 级始终放行** ——
+     * 崩溃与致命错误必须留下痕迹，否则排查无从下手。
+     */
+    @Volatile
+    var enabled: Boolean = false
+        private set
+
+    fun setEnabled(value: Boolean) {
+        enabled = value
+    }
+
     private fun log(level: Char, tag: String, msg: String, tr: Throwable?) {
+        // 总开关：E 级不受限（crash handler 也走这条通道）
+        if (!enabled && level != 'E') return
         // 同步镜像到 logcat：无文件权限时仍有 adb 可读
         when (level) {
             'V' -> Log.v(tag, msg)

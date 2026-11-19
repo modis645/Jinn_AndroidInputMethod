@@ -64,6 +64,7 @@ class SettingsActivity : ComponentActivity() {
     // 功能开关（自动唤起键盘 / 词频学习 / 预测 / 键面韵母提示 / 拼音声韵显示）
     private lateinit var switchAutoShowKeyboard: Switch
     private lateinit var switchUserLearning: Switch
+    private lateinit var switchDiagnosticLog: Switch
     private lateinit var switchPredict: Switch
 
     /** 在线翻译已整体删除（2026-11-17 定版）：本页不再有相关卡片或入口 */
@@ -242,6 +243,10 @@ class SettingsActivity : ComponentActivity() {
         switchAutoShowKeyboard = findViewById(R.id.switch_auto_show_keyboard)
         switchUserLearning = findViewById(R.id.switch_user_learning)
         switchPredict = findViewById(R.id.switch_predict)
+        // 诊断日志：默认关（文案与说明都在代码里下发，strings.xml 不动）
+        switchDiagnosticLog = findViewById(R.id.switch_diagnostic_log)
+        switchDiagnosticLog.text = TEXT_DIAG_LOG
+        findViewById<TextView>(R.id.text_diagnostic_log_desc).text = TEXT_DIAG_LOG_DESC
         // 在线翻译（BYOK）已整体下线：卡片、开关、配置入口与状态摘要一并删除
 
         // 只使用繁体字：候选里的简体字全部替换为繁体字（文案同样代码下发）
@@ -398,6 +403,13 @@ class SettingsActivity : ComponentActivity() {
         switchPredict.setOnCheckedChangeListener { _, checked ->
             prefs.predictEnabled = checked
             Diagnostics.i(TAG, "候选预测词: ${if (checked) "开启" else "关闭"}（立即生效）")
+        }
+        // 诊断日志：勾选即写入并热更 Diagnostics（关闭后 I/W/V 立刻停止落盘与 logcat；E 级始终放行）。
+        // 关闭不删历史日志，只停新增 —— 已写下的文件仍可用「导出诊断包」取走
+        switchDiagnosticLog.setOnCheckedChangeListener { _, checked ->
+            prefs.diagnosticLog = checked
+            Diagnostics.setEnabled(checked)
+            Diagnostics.i(TAG, "诊断日志: ${if (checked) "开启" else "关闭"}（立即生效）")
         }
 
         // 保活相关（前台服务 / 无障碍互保 / ROOT 白名单 / 电池白名单）已全部移除：
@@ -643,6 +655,7 @@ class SettingsActivity : ComponentActivity() {
         switchUseTraditional.isChecked = prefs.useTraditional
         switchUserLearning.isChecked = prefs.userLearning
         switchPredict.isChecked = prefs.predictEnabled
+        switchDiagnosticLog.isChecked = prefs.diagnosticLog
 
         // 输入方案：定制版只有「26 键全拼」一项，所以恒选第 0 项，并把历史遗留的双拼开关关掉
         // （老用户升级上来 prefs 里可能还是某套双拼；不关掉会出现「下拉显示全拼、实际仍双拼」）
@@ -1718,6 +1731,10 @@ class SettingsActivity : ComponentActivity() {
 
         // 只使用繁体字：胶囊开关文案（与「自动唤起键盘」同行，紧随其后）
         const val TEXT_USE_TRADITIONAL = "只使用繁体字"
+
+        /** 诊断日志开关（默认关）：标题 + 说明小字 */
+        const val TEXT_DIAG_LOG = "诊断日志"
+        const val TEXT_DIAG_LOG_DESC = "记录运行日志到应用目录（默认关）。排查问题时再开；关闭不删历史日志"
 
         // 在线翻译已整体删除（2026-11-17 定版）：下面几句文案随之作废，仅保留键名注释便于对照历史
 

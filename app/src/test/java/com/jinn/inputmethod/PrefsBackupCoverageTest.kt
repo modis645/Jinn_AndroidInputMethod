@@ -123,7 +123,7 @@ class PrefsBackupCoverageTest {
         // 2026-11-16 起 131 → 90：删在线翻译 20 键 + 在线语音六家凭据 12 键 + OpenAI 兼容转写 9 键
         // 2026-11-02 起 123 → 131：新增百度短语音识别 5 键（AK / SK / dev_pid / token / token 过期时刻，
         //                       后两个是派生缓存、刻意不进包）+ Deepgram 3 键（Key / 模型 / 语言）
-        assertEquals("提取到的键常量应是 90 个（改键数请同步本断言）", 90, keyConstants.size)
+        assertEquals("提取到的键常量应是 91 个（改键数请同步本断言）", 91, keyConstants.size)
 
         val export = bodyOf("exportForBackup")
         // 压缩空白：导入分支里有一部分写成 `KEY_X ->` 换行接 `asBool(v)?.let{…}`，
@@ -170,6 +170,8 @@ class PrefsBackupCoverageTest {
             "KEY_SHOW_QUANPIN" to "asBool(v)",
             "KEY_NUMBER_ROW_ENABLED" to "asBool(v)",
             "KEY_USER_LEARNING" to "asBool(v)",
+            // 2026-11-17：诊断日志开关（默认关），随配置备份走
+            "KEY_DIAGNOSTIC_LOG" to "asBool(v)",
             "KEY_RARE_TIER2" to "asBool(v)",
             "KEY_RARE_TIER3" to "asBool(v)",
             "KEY_USE_TRADITIONAL" to "asBool(v)",
