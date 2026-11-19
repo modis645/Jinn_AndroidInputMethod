@@ -1,4 +1,4 @@
-﻿package com.jinn.inputmethod
+package com.jinn.inputmethod
 
 import android.Manifest
 import android.content.Context
@@ -282,7 +282,16 @@ class VoiceSettingsActivity : ComponentActivity() {
         refreshMicState()
     }
 
-    /** 总开关 → 卡片显隐（本机离线是唯一后端，这一页不存在「只有在线配置」的状态） */
+    /**
+     * 总开关 → 卡片显隐。
+     *
+     * 契约（2026-11-19 定稿，用户口径「保持隐藏」）：**语音总开关关着时，本机离线模型卡一起隐藏**。
+     * 理由两条：①出厂默认关语音；②避免「模型没下完就点启用」的半开状态（开关一开本方法立刻把卡片
+     * 放出来，下载 / 删除 / 导入当场可用）。模型缺失不会崩：语音侧只返回「离线模型未就绪」。
+     *
+     * 想改成「模型卡常显」前先确认需求 —— 这属于用户明确否决过的改法，
+     * `VoiceModelCardVisibilityGuardTest` 会拦住这种无声改动。
+     */
     private fun applyVoiceBlocksVisibility(voiceEnabled: Boolean) {
         val visibility = if (voiceEnabled) View.VISIBLE else View.GONE
         cardMicPermission.visibility = visibility

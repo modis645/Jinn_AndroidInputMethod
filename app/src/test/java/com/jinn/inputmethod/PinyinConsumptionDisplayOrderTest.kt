@@ -15,6 +15,10 @@ import java.io.File
  * `contains` 找「首个含该字的音节」。同一个字若挂在两个音节、且**靠前那次被 60 条上限挡在展示窗口之外**，
  * 渲染出来的那一条其实来自后一音节，消费却仍钉在靠前音节 ⇒ 点击后残码多留一个音节。
  *
+ * 2026-11-19 起单字只取**首音节**（用户口径「按拼音顺序依次出」），里程碑：
+ * 靠后音节单独贡献的单字不会再被渲染 ⇒ 上述错位在整串输入里**不再可能出现**；
+ * 这里改为钉住新不变量（候选 = 首音节窗口，消费只覆盖首音节），另两例继续守「窗口内消费靠前音节」。
+ *
  * 为什么用**自造字表**：真实资产里这个前提当前**不存在**（离线扫过：`pinyin_chars.txt.xz` 里
  * 「首现下标 ≥ 60 且另有音节 < 60」的字 **0 个**；另有 583 个字挂在两个音节但两处都在 60 以内
  * ⇒ 展示序 = 首现序，不受影响）。要用真表复现就得等资产变化 —— 而测试装置支持注入自定义字表，
@@ -79,27 +83,29 @@ class PinyinConsumptionDisplayOrderTest {
     }
 
     @Test
-    fun 靠前音节的同名条目被展示上限挡住时消费应跟着展示序走() {
+    fun 靠后音节独有的单字不进入候选_跨音节错位不再可能() {
         val target = pool[0]
-        val fillers = pool.drop(1).take(60)          // 60 个填充字
+        val fillers = pool.drop(1).take(60)          // 60 个填充字，正好占满 fu 的展示窗口
         assertTrue("字池太小，无法构造 60 条展示上限之外的条目", fillers.size == 60)
-        // fu 里 target 排在第 61 位（下标 60）—— 恰好落在展示窗口之外；gao 里它在第 1 位
+        // fu 里 target 排在第 61 位（窗口之外）；target 只在 gao 里能取到
         loadEngine(charsText(fu = fillers + target, gao = listOf(target, pool[70])))
 
-        // 展示侧：整条候选列表里 target 只会由 gao 贡献（排在 60 个填充字之后）
+        // 2026-11-19 口径：单字只取首音节 ⇒ gao 独有的 target 不出现；首音节窗口 60 条都在
         val candidates = PinyinEngine.query("fugao").candidates
-        val pos = candidates.indexOf(target)
-        assertTrue("前提不成立：候选列表里没有 $target（$candidates）", pos >= 0)
         assertTrue(
-            "前提不成立：$target 应排在 60 个填充字之后（实际 pos=$pos）",
-            pos >= 60,
+            "首音节窗口的 60 条单字都必须进候选（实际 ${candidates.size}）",
+            fillers.all { it in candidates },
         )
-
-        // 消费侧：必须与展示序一致 —— 覆盖 fu + gao（fugao = 5 字符 2 音节）
+        assertTrue(
+            "靠后音节独有的字 $target 不应出现在候选里（旧口径会把它排在第 61 位之后，点击即错位）",
+            !candidates.contains(target),
+        )
+        // 展示的首音节字，消费也只覆盖首音节（2 字母 1 音节）
+        val shown = fillers.first { it in candidates }
         assertEquals(
-            "消费区间应与「展示序里首个含该字的音节」一致（否则点击后残码多留一个音节）",
-            PinyinEngine.Consumption(quanpinChars = 5, syllables = 2),
-            PinyinEngine.consumption("fugao", target),
+            "首音节候选的消费应停在 fu",
+            PinyinEngine.Consumption(quanpinChars = 2, syllables = 1),
+            PinyinEngine.consumption("fugao", shown),
         )
     }
 

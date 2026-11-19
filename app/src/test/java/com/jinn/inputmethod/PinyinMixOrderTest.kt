@@ -80,9 +80,10 @@ class PinyinMixOrderTest {
             syllables = "ni\nhao",
         )
         // 即便对首个音节设了表，多音节查询也不重排（混合表只服务单音节）
+        // 另：多音节单字只取首音节（2026-11-19 口径）⇒ hao 的 c/d 不出现
         PinyinEngine.setMixOrderForTest("ni\ta|b")
         assertEquals(
-            listOf("你好", "a", "b", "c", "d"),
+            listOf("你好", "a", "b"),
             PinyinEngine.query("nihao").candidates,
         )
     }

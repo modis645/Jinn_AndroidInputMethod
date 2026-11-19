@@ -59,15 +59,30 @@ class CandidateCountBoundTest {
         )
     }
 
-    /** 多音节输入时，词候选之外还会叠加各音节单字，总量更大 */
+    /**
+     * 多音节输入：单字**只来自第一个音节**（2026-11-19 口径）。
+     *
+     * 旧口径叠加各音节单字，打 `zhangmazi` 时会混出 ma/zi 的字，用户判为不合理；
+     * 现在严格前缀：首音节单字 + 前缀词，选掉首音节后缓冲区缩短、下一音节自然成为首音节。
+     */
     @Test
-    fun multiSyllableAccumulatesCandidates() {
-        val single = PinyinEngine.query("ni").candidates.size
-        val multi = PinyinEngine.query("nihao").candidates.size
-        assertTrue(
-            "多音节候选($multi)不应少于单音节($single)",
-            multi >= single,
+    fun multiSyllableOnlyFirstSyllableChars() {
+        // 自带夹具，不依赖其他用例留下的加载态（object 引擎跨用例共享）
+        PinyinEngine.resetForTest()
+        PinyinEngine.loadFromTexts(
+            chars = "ni\t你,尼,泥\nhao\t好,号,毫",
+            phrases = "nihao\t你好",
+            syllables = "ni\nhao",
         )
+        val single = PinyinEngine.query("ni").candidates.size
+        val multi = PinyinEngine.query("nihao").candidates
+        assertTrue(
+            "多音节候选(${multi.size})不应少于单音节($single)：前缀词只会加，不会减",
+            multi.size >= single,
+        )
+        // 首音节的字必须在；第二音节的字不得混入（"hao" 的字只有选掉 "ni" 之后才该出现）
+        assertTrue("首音节单字缺失：${multi.take(5)}", multi.contains("你"))
+        assertTrue("第二音节单字不得出现在未选词阶段", !multi.contains("好"))
     }
 
     /**
@@ -96,14 +111,23 @@ class CandidateCountBoundTest {
 
         val eight = PinyinEngine.query(syllables.take(8).joinToString(""))   // 正好在上限
         val twenty = PinyinEngine.query(syllables.joinToString(""))          // 20 音节，超上限
+        // 单字只取首音节（ni 的 60 字块）：8 音节输入不会把后 7 个音节的字堆进来
         assertTrue(
-            "8 音节应给出数百条候选（实际 ${eight.candidates.size}）",
-            eight.candidates.size >= 8 * 40,
+            "8 音节只应给出首音节的字（≤60 条），实际 ${eight.candidates.size}",
+            eight.candidates.size <= 60,
         )
         assertEquals(
             "超上限输入必须与 8 音节前缀同量（实际 ${twenty.candidates.size} vs ${eight.candidates.size}）",
             eight.candidates.size,
             twenty.candidates.size,
+        )
+        // 20 音节里第 2~20 音节的字一个都不许出现（旧口径会把 1200 条全堆进来）
+        val laterChars = (1 until syllables.size).flatMap { i ->
+            0x4E00 + i * 60 until 0x4E00 + i * 60 + 60
+        }.map { it.toChar().toString() }
+        assertTrue(
+            "20 音节输入混入了后续音节的单字：${twenty.candidates.filter { it in laterChars }.take(5)}",
+            twenty.candidates.none { it in laterChars },
         )
     }
 

@@ -133,12 +133,13 @@ class PinyinEngineTest {
 
     @Test
     fun 按音节数逐级递减_两音节() {
-        // nihao = [ni,hao] 2 音节 → 先 2 字词 你好，再 1 字 你/好
+        // nihao = [ni,hao] 2 音节 → 先 2 字词 你好，再**首音节**单字 你（2026-11-19 口径）
         val result = PinyinEngine.query("nihao")
         val c = result.candidates
         assertTrue("应含 2 字词 你好: $c", c.contains("你好"))
         assertTrue("应含 单字 你: $c", c.contains("你"))
-        assertTrue("应含 单字 好: $c", c.contains("好"))
+        // 第二音节（hao）的「好」不得在未选词阶段出现：选掉「你」之后缓冲区才是 hao
+        assertTrue("第二音节单字 好 不应出现: $c", !c.contains("好"))
         // 2 字词排在单字前。位置比较先各自取下标并断言非负：
         // 只写「indexOf(A) < indexOf(B)」在 A 缺失、B 存在时是 -1 < 0 ⇒ 恒真（假绿）。
         val niHaoAt = c.indexOf("你好")

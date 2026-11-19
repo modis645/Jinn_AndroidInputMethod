@@ -2806,8 +2806,11 @@ object PinyinEngine {
      *
      * 候选按「音节数逐级递减」组织（对齐 AOSP PinyinIME prepare_candidates）：
      *  输入 N 个音节 → 先 N 字词、再 N-1 字词、…、最后 1 字单字。
-     *  如输入 nihao（[ni,hao]）→ 2 字词「你好」+ 单字「你/尼/泥」「好/号/毫」；
-     *  输入 nihaoma（[ni,hao,ma]）→ 3 字「你好吗」+ 2 字「你好」+ 各音节单字。
+     *  如输入 nihao（[ni,hao]）→ 2 字词「你好」+ 单字「你/尼/泥」；单字**只取第一个音节**
+     *  （2026-11-19 改）。旧口径把「好/号/毫」也塞进来，打 zhangmazi 时会混出 ma/zi 的单字，
+     *  与「按拼音顺序依次出、选一个再出下一个」的直觉相悖。
+     *  输入 nihaoma（[ni,hao,ma]）→ 3 字「你好吗」+ 2 字「你好」+ 首音节单字「你/尼/泥」。
+     *  后续音节的字词靠「选掉前一音节 → 缓冲区缩短 → 重新成为首音节」自然接续。
      *
      * 不做「整串前缀联想」式的**单字**联想（那会产生 nihaoa/nihaoma 等超出拼音数量的单字）；
      * 候选的音节数恒等于输入：不出现比输入更长的词。
@@ -2912,9 +2915,15 @@ object PinyinEngine {
             if (words.add(word)) syllableCounts[word] = sylCount
             if (sylCount > targetSyllables) targetSyllables = sylCount
         }
+        // 2b. 单字：**只取第一个音节**（2026-11-19 修）。
+        // 旧口径把每个音节各自的单字都堆进候选，于是打 `zhangmazi` 会混进 `ma`/`zi` 的单字
+        // （张/章… 后面跟着 麻/马… 再跟着 字/自…），用户判为「不合理」：未选词时应当按拼音顺序
+        // 依次出——先出本前缀的单字/词，选掉第一个音节后缓冲区只剩 `mazi`，再出下一批。
+        // 词条侧本来就是前缀口径（`for k in size downTo 1`），单字也必须对齐同一口径。
         val chars = LinkedHashSet<String>(cap)
-        for (syl in syllables) {
-            for (c in displayTake(charsFor(syl), MAX_CHARS)) {
+        val firstSyllable = syllables.firstOrNull()
+        if (firstSyllable != null) {
+            for (c in displayTake(charsFor(firstSyllable), MAX_CHARS)) {
                 syllableCounts[c] = 1
                 chars.add(c)
             }
